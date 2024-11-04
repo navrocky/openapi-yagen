@@ -1,0 +1,8 @@
+name: test_generator
+description: This is a test generator
+mainScriptPath: main.js
+variables:
+  - name: OPT1
+    defaultValue: "false"
+  - name: OPT2
+    defaultValue: "true"
