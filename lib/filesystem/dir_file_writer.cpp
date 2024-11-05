@@ -14,20 +14,21 @@ namespace {
 LogFacade::Logger logger("FS::DirFileWriter");
 }
 
-DirFileWriter::DirFileWriter(const std::string& outDir)
-    : outDir(outDir)
+DirFileWriter::DirFileWriter(Opts&& opts)
+    : opts(std::move(opts))
 {
 }
 
 void DirFileWriter::write(const std::string& fileName, const std::string& content)
 {
-    filesystem::path fullPath(outDir);
+    filesystem::path fullPath(opts.outDir);
     fullPath /= fileName;
     logger.debug("<64aeffb8> Write file: {}", fullPath.string());
 
     if (fullPath.has_parent_path()) {
-        if (!filesystem::create_directories(fullPath.parent_path()))
-            throw runtime_error(format("<f60b9569> Cannot create directory: {}", outDir));
+        auto outDirPath = fullPath.parent_path();
+        if (!filesystem::exists(outDirPath) && !filesystem::create_directories(outDirPath))
+            throw runtime_error(format("<f60b9569> Cannot create directory: {}", outDirPath.string()));
     }
 
     ofstream fs(fullPath, ios_base::out | ios_base::trunc);
@@ -38,7 +39,7 @@ void DirFileWriter::write(const std::string& fileName, const std::string& conten
 
 void DirFileWriter::clear()
 {
-    for (const auto& entry : filesystem::directory_iterator(outDir)) {
+    for (const auto& entry : filesystem::directory_iterator(opts.outDir)) {
         auto fn = entry.path().filename();
         if (fn != "." && fn != "..")
             filesystem::remove_all(entry.path());

@@ -49,8 +49,13 @@ std::string InjaTemplateRenderer::render(const std::string& filePath, const Node
 {
     logger.debug("<53daa47f> Render template: {}", filePath);
     auto tmpl = opts.fileReader->read(filePath);
+    inja::Environment env;
+    env.set_include_callback([&](const std::string& path, const std::string& templateName) {
+        return env.parse(opts.fileReader->read(templateName));
+    });
+    env.set_search_included_templates_in_files(false);
     auto jsonData = valueToJson(data);
-    return inja::render(tmpl, jsonData);
+    return env.render(tmpl, jsonData);
 }
 
 }

@@ -16,5 +16,6 @@ private:
     std::string overrideDir;
     std::string format;
     std::string generatorPath;
+    std::vector<std::string> postProcessTools;
     bool clearOutDir;
 };

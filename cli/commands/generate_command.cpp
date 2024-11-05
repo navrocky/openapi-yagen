@@ -2,10 +2,11 @@
 
 #include <lib/filesystem/dir_file_reader_backend.h>
 #include <lib/filesystem/dir_file_writer.h>
+#include <lib/filesystem/file_post_processor.h>
 #include <lib/filesystem/tools.h>
+#include <lib/generator/openapi_generator.h>
 #include <lib/js/executor.h>
 #include <lib/logger/logger.h>
-#include <lib/openapi_generator.h>
 #include <lib/templates/inja_template_renderer.h>
 
 using namespace std;
@@ -26,6 +27,8 @@ void GenerateCommand::reg(CLI::App& app)
     cmd->add_option("-o, --out-dir", outDir, "Output directory for generated code")->default_str(".");
     cmd->add_option("-g, --generator", generatorPath, "Path to generator. It can be directory or zip archive")
         ->required();
+    cmd->add_option("-p, --post-process", postProcessTools, "Post process file with specified tool for extension")
+        ->take_all();
     cmd->add_flag("-c, --clear", clearOutDir, "Clear output directory before generating");
 }
 
@@ -42,7 +45,12 @@ void GenerateCommand::process()
         .fileReader = fileReader,
     });
 
-    auto fileWriter = make_shared<FS::DirFileWriter>(outDir);
+    auto filePostProcessor = make_shared<FS::SystemToolsFilePostProcessor>(postProcessTools);
+
+    auto fileWriter = make_shared<FS::DirFileWriter>(FS::DirFileWriter::Opts {
+        .outDir = outDir,
+        .filePostProcessor = filePostProcessor,
+    });
 
     auto jsExecutor = make_shared<JS::Executor>(JS::Executor::Opts {
         .fileReader = fileReader,
@@ -57,6 +65,9 @@ void GenerateCommand::process()
         .metadataPath = "generator.yml",
         .clearOutDir = clearOutDir,
     });
+
+    if (specPath.empty())
+        throw runtime_error("<d6cb8e9c> Spec file not provided");
 
     logger.debug(
         "<b1f2a941> Generate output: schema={}, generator={}, clearOutputDir={}", specPath, generatorPath, clearOutDir);

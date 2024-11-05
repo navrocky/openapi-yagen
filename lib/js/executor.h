@@ -2,9 +2,10 @@
 
 #include <functional>
 
-#include <quickjs/quickjs.h>
-
 #include "../filesystem/definitions.h"
+
+typedef struct JSContext JSContext;
+typedef struct JSRuntime JSRuntime;
 
 namespace JS {
 

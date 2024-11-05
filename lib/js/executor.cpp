@@ -1,7 +1,9 @@
 #include "executor.h"
 
-#include <quickjs/quickjs-libc.h>
 #include <stdexcept>
+
+#include <quickjs/quickjs-libc.h>
+#include <quickjs/quickjs.h>
 
 #include "../common/finalize.h"
 #include "../filesystem/file_reader.h"

@@ -9,8 +9,7 @@ std::vector<std::string_view> operator|(const std::string_view& s, const StringS
     vector<string_view> output;
     string::size_type prev_pos = 0, pos = 0;
     while ((pos = s.find(p.delimiter, pos)) != string::npos) {
-        string substring(s.substr(prev_pos, pos - prev_pos));
-        output.push_back(substring);
+        output.push_back(s.substr(prev_pos, pos - prev_pos));
         prev_pos = ++pos;
     }
     output.push_back(s.substr(prev_pos, pos - prev_pos));

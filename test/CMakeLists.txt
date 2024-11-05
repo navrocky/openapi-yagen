@@ -17,5 +17,9 @@ add_executable(${TARGET} ${SOURCES})
 
 target_link_libraries(${TARGET}
   Catch2::Catch2
-  openapi-yagen-lib
+  openapi-yagen-lib-common
+  openapi-yagen-lib-fs
+  openapi-yagen-lib-js
+  openapi-yagen-lib-generator
+  openapi-yagen-lib-templates
 )

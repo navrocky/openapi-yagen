@@ -1,9 +1,6 @@
 set(TARGET openapi-yagen)
 
-find_package(termcolor REQUIRED)
-find_package(yaml-cpp REQUIRED)
 find_package(CLI11 REQUIRED)
-find_package(quickjs REQUIRED)
 
 add_link_options(-static -static-libgcc -static-libstdc++)
 
@@ -25,11 +22,8 @@ set(SOURCES
 add_executable(${TARGET} ${SOURCES})
 
 target_link_libraries(${TARGET}
-    termcolor::termcolor
-    yaml-cpp::yaml-cpp
     CLI11::CLI11
-    quickjs::quickjs
-    openapi-yagen-lib
+    openapi-yagen-lib-generator
 )
 
 include(GNUInstallDirs)

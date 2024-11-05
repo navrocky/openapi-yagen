@@ -6,17 +6,17 @@
 #include <quickjs/quickjs-libc.h>
 #include <quickjs/quickjs.h>
 
-#include "common/finalize.h"
-#include "common/node_walker.h"
-#include "common/yaml_or_json_parser.h"
-#include "filesystem/file_reader.h"
-#include "filesystem/file_writer.h"
-#include "filesystem/tools.h"
-#include "js/executor.h"
-#include "js/tools.h"
-#include "logger/logger.h"
-#include "model/generator_metadata.h"
-#include "templates/template_renderer.h"
+#include "../common/finalize.h"
+#include "../common/node_walker.h"
+#include "../common/yaml_or_json_parser.h"
+#include "../filesystem/file_reader.h"
+#include "../filesystem/file_writer.h"
+#include "../filesystem/tools.h"
+#include "../js/executor.h"
+#include "../js/tools.h"
+#include "../logger/logger.h"
+#include "../templates/template_renderer.h"
+#include "generator_metadata.h"
 
 using namespace std;
 using namespace JS;

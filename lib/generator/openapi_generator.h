@@ -1,8 +1,8 @@
 #pragma once
 
-#include "filesystem/definitions.h"
-#include "js/definitions.h"
-#include "templates/definitions.h"
+#include "../filesystem/definitions.h"
+#include "../js/definitions.h"
+#include "../templates/definitions.h"
 
 class OpenApiGenerator {
 public:
