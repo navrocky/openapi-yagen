@@ -49,6 +49,8 @@ void checkForException(JSContext* ctx, const JSValue& val, const std::string_vie
 template <typename T>
 JSValue ptrToJSValue(T* ptr)
 {
+    // TODO: Try use JS_SetOpaque
+
     JSValue v;
     v.u.ptr = (void*)ptr;
     v.tag = JS_TAG_PTR;
