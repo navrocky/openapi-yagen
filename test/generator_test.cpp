@@ -17,7 +17,7 @@ using namespace FS;
 
 class MockedTemplateRenderer : public Templates::TemplateRenderer {
 public:
-    string render(const string& filePath, const Node& data) override
+    string render(const string& filePath, const Node& data, const Functions& funcs) override
     {
         stringstream ss;
         ss << "template=" << filePath << ", data=" << data;

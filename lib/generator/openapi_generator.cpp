@@ -1,6 +1,7 @@
 #include "openapi_generator.h"
 
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include <quickjs/quickjs-libc.h>
@@ -8,6 +9,7 @@
 
 #include "../common/finalize.h"
 #include "../common/node_walker.h"
+#include "../common/std_tools.h"
 #include "../common/yaml_or_json_parser.h"
 #include "../filesystem/file_reader.h"
 #include "../filesystem/file_writer.h"
@@ -48,17 +50,46 @@ GeneratorMetadata readMetadata(const FS::FileReaderPtr& fileReader, const string
     }
 }
 
+Templates::TemplateRenderer::Functions mapJSFuncsToTemplateFuncs(JSContext* ctx, const JSValue& v)
+{
+    Templates::TemplateRenderer::Functions res;
+    jsIterateObjectProps(ctx, v, [&](const string& propName, const JSValue& propValue) {
+        auto wrappedPropValue = JS_DupValue(ctx, propValue) | wrap(ctx);
+        Templates::TemplateFunction func;
+        func.name = propName;
+        func.func = [ctx, wrappedPropValue](const Node::Vec& args) {
+            auto jsArgs = args | mapToVector([&](const auto& n) { return nodeToJSValue(ctx, n); });
+            finalize
+            {
+                for (const auto& v : jsArgs) {
+                    JS_FreeValue(ctx, v);
+                }
+            };
+            auto globalObj = JS_GetGlobalObject(ctx) | wrap(ctx);
+            JSValue result = JS_Call(ctx, *wrappedPropValue, *globalObj, jsArgs.size(), jsArgs.data());
+            return jsValueToNode(ctx, result);
+        };
+        res.push_back(std::move(func));
+    });
+    return res;
+}
+
 JSValue renderTemplate(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, JSValue* data)
 {
     return runAndCatchExceptions(ctx, [&] {
         const auto& opts = *jsValueToPtr<const OpenApiGenerator::Opts>(*data);
-        if (argc != 3)
-            throw runtime_error("<ff372a54> renderTemplate requires two arguments (templateFileName: string, data: "
-                                "object, outFileName: string)");
+        if (argc < 3 || argc > 4)
+            throw runtime_error("<ff372a54> renderTemplate requires 3 or 4 arguments (templateFileName: string, data: "
+                                "object, outFileName: string, funcs?: {<funcName>: function(args)})");
         auto templateFileName = jsValueToString(ctx, argv[0]);
         Node data = jsValueToNode(ctx, argv[1]);
         auto outFileName = jsValueToString(ctx, argv[2]);
-        auto content = opts.templateRenderer->render(templateFileName, data);
+
+        Templates::TemplateRenderer::Functions funcs;
+        if (argc >= 4)
+            funcs = mapJSFuncsToTemplateFuncs(ctx, argv[3]);
+
+        auto content = opts.templateRenderer->render(templateFileName, data, funcs);
         opts.fileWriter->write(outFileName, content);
         return JS_NewBool(ctx, 1);
     });

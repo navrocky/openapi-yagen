@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <stdexcept>
 #include <string_view>
 
@@ -10,6 +11,28 @@
 namespace JS {
 
 static const int JS_TAG_PTR = 100;
+
+class JSValueWrapper {
+public:
+    JSValueWrapper(JSContext* ctx, const JSValue& value);
+    ~JSValueWrapper();
+    JSValueWrapper(const JSValueWrapper&);
+    JSValueWrapper(JSValueWrapper&&);
+    JSValueWrapper& operator=(const JSValueWrapper&) = delete;
+
+    const JSValue& operator*() const { return v; }
+
+private:
+    JSContext* ctx;
+    JSValue v;
+    bool empty;
+};
+
+struct WrapParams {
+    JSContext* ctx;
+};
+inline WrapParams wrap(JSContext* ctx) { return { ctx }; }
+inline JSValueWrapper operator|(const JSValue& v, const WrapParams& params) { return JSValueWrapper(params.ctx, v); }
 
 template <typename Block>
 JSValue runAndCatchExceptions(JSContext* ctx, const Block& block)
@@ -53,5 +76,8 @@ void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, JSCFun
     auto f = JS_NewCFunctionData(ctx, func, 0, 0, 1, &optsVal);
     setObjProperty(ctx, obj, name, f);
 }
+
+void jsIterateObjectProps(
+    JSContext* ctx, const JSValue& v, const std::function<void(const std::string& name, const JSValue& value)>& block);
 
 }

@@ -58,6 +58,34 @@ JSValue nodeToJSValue(JSContext* ctx, const Node& node)
     }
 }
 
+void jsIterateObjectProps(
+    JSContext* ctx, const JSValue& v, const std::function<void(const std::string& name, const JSValue& value)>& block)
+{
+    if (!JS_IsObject(v))
+        throw runtime_error("<6396dcb7> Object expected");
+    JSPropertyEnum* propEnum;
+    uint32_t len;
+    if (JS_GetOwnPropertyNames(ctx, &propEnum, &len, v, JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) < 0)
+        throw runtime_error("<5d5199f0> Cannot enum props");
+    finalize
+    {
+        for (uint32_t i = 0; i < len; i++) {
+            JS_FreeAtom(ctx, propEnum[i].atom);
+        }
+        js_free(ctx, propEnum);
+    };
+    Node::Map res;
+    for (uint32_t i = 0; i < len; i++) {
+        auto propAtom = propEnum[i].atom;
+        auto s = JS_AtomToCString(ctx, propAtom);
+        finalize { JS_FreeCString(ctx, s); };
+        auto propName = string(s);
+        auto propValue = JS_GetProperty(ctx, v, propAtom);
+        finalize { JS_FreeValue(ctx, propValue); };
+        block(propName, propValue);
+    }
+}
+
 Node jsValueToNode(JSContext* ctx, const JSValue& v)
 {
     if (JS_IsNull(v)) {
@@ -90,27 +118,9 @@ Node jsValueToNode(JSContext* ctx, const JSValue& v)
         }
         return { res };
     } else if (JS_IsObject(v)) {
-        JSPropertyEnum* propEnum;
-        uint32_t len;
-        if (JS_GetOwnPropertyNames(ctx, &propEnum, &len, v, JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) < 0)
-            throw runtime_error("<5d5199f0> Cannot enum props");
-        finalize
-        {
-            for (uint32_t i = 0; i < len; i++) {
-                JS_FreeAtom(ctx, propEnum[i].atom);
-            }
-            js_free(ctx, propEnum);
-        };
         Node::Map res;
-        for (uint32_t i = 0; i < len; i++) {
-            auto propAtom = propEnum[i].atom;
-            auto s = JS_AtomToCString(ctx, propAtom);
-            finalize { JS_FreeCString(ctx, s); };
-            auto propName = string(s);
-            auto it = JS_GetProperty(ctx, v, propAtom);
-            finalize { JS_FreeValue(ctx, it); };
-            res[propName] = jsValueToNode(ctx, it);
-        }
+        jsIterateObjectProps(ctx, v,
+            [&](const auto& propName, const JSValue& propValue) { res[propName] = jsValueToNode(ctx, propValue); });
         return { res };
     } else {
         throw runtime_error(format("<d05dbcae> Unsupported JS value: {}", v.tag));
@@ -125,4 +135,31 @@ void setObjProperty(JSContext* ctx, JSValue obj, const std::string& name, JSValu
         throw runtime_error(format("<37565a00> Cannot set property: {}", name));
 }
 
+JSValueWrapper::JSValueWrapper(JSContext* ctx, const JSValue& value)
+    : ctx(ctx)
+    , v(value)
+    , empty(false)
+{
+}
+
+JSValueWrapper::~JSValueWrapper()
+{
+    if (!empty)
+        JS_FreeValue(ctx, v);
+}
+
+JSValueWrapper::JSValueWrapper(const JSValueWrapper& w)
+    : v(JS_DupValue(w.ctx, w.v))
+    , ctx(w.ctx)
+    , empty(false)
+{
+}
+
+JSValueWrapper::JSValueWrapper(JSValueWrapper&& w)
+    : v(std::move(w.v))
+    , ctx(w.ctx)
+    , empty(false)
+{
+    w.empty = true;
+}
 }

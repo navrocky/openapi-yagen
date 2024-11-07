@@ -6,14 +6,14 @@ using namespace std;
 
 std::vector<std::string_view> operator|(const std::string_view& s, const StringSplitParams& p)
 {
-    vector<string_view> output;
-    string::size_type prev_pos = 0, pos = 0;
+    vector<string_view> res;
+    string::size_type prevPos = 0, pos = 0;
     while ((pos = s.find(p.delimiter, pos)) != string::npos) {
-        output.push_back(s.substr(prev_pos, pos - prev_pos));
-        prev_pos = ++pos;
+        res.push_back(s.substr(prevPos, pos - prevPos));
+        prevPos = ++pos;
     }
-    output.push_back(s.substr(prev_pos, pos - prev_pos));
-    return output;
+    res.push_back(s.substr(prevPos, pos - prevPos));
+    return res;
 }
 
 int64_t operator|(const std::string& s, const ToNumberParams<int64_t>&) { return std::stoll(s); }

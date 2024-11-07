@@ -12,7 +12,7 @@ public:
     };
     InjaTemplateRenderer(Opts&& opts);
 
-    std::string render(const std::string& filePath, const Node& data) override;
+    std::string render(const std::string& filePath, const Node& data, const Functions& funcs) override;
 
 private:
     Opts opts;
