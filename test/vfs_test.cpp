@@ -5,7 +5,10 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <lib/common/string_tools.h>
 #include <lib/filesystem/dir_file_reader_backend.h>
+#include <lib/filesystem/file_post_processor.h>
+#include <lib/filesystem/tools.h>
 #include <lib/filesystem/zip_file_reader_backend.h>
 
 #include "common/tools.h"
@@ -56,4 +59,14 @@ TEST_CASE("Filesystem with backends", "[vfs]")
     SECTION("Read existing file from dir") { REQUIRE(rtrim(fs.read("test_file")) == "Hello world!"); }
     SECTION("Read existing file from zip") { REQUIRE(rtrim(fs.read("another_file")) == "This is a another file"); }
     SECTION("Read non existing file") { REQUIRE_THROWS(fs.read("non_existent_file")); }
+}
+
+TEST_CASE("Post process file", "[vfs]")
+{
+    string outFile = "/tmp/out";
+    FS::SystemToolsFilePostProcessor pp({ format("h,cpp:echo \"Processed file is: %file%.\">{}", outFile) });
+    pp.postProcess("test.h");
+    auto outFileContent = FS::readFile(outFile);
+    REQUIRE((outFileContent | trim()) == "Processed file is: test.h.");
+    filesystem::remove(outFile);
 }

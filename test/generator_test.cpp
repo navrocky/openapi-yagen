@@ -6,8 +6,8 @@
 
 #include <lib/filesystem/file_reader.h>
 #include <lib/filesystem/file_writer.h>
-#include <lib/js/executor.h>
 #include <lib/generator/openapi_generator.h>
+#include <lib/js/executor.h>
 #include <lib/templates/template_renderer.h>
 
 #include "common/tools.h"

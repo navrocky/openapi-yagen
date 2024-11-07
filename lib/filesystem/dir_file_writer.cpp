@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "../logger/logger.h"
+#include "file_post_processor.h"
 
 using namespace std;
 
@@ -31,10 +32,17 @@ void DirFileWriter::write(const std::string& fileName, const std::string& conten
             throw runtime_error(format("<f60b9569> Cannot create directory: {}", outDirPath.string()));
     }
 
-    ofstream fs(fullPath, ios_base::out | ios_base::trunc);
-    fs << content;
-    if (fs.fail() || fs.bad())
-        throw runtime_error(format("<a08d4abb> Cannot write file: {}", fullPath.generic_string()));
+    // write file
+    {
+        ofstream fs(fullPath, ios_base::out | ios_base::trunc);
+        fs << content;
+        if (fs.fail() || fs.bad())
+            throw runtime_error(format("<a08d4abb> Cannot write file: {}", fullPath.generic_string()));
+    }
+
+    // post process file
+    if (opts.filePostProcessor)
+        opts.filePostProcessor->postProcess(fullPath);
 }
 
 void DirFileWriter::clear()

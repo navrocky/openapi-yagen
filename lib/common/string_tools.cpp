@@ -21,3 +21,5 @@ int operator|(const std::string& s, const ToNumberParams<int>&) { return std::st
 unsigned long operator|(const std::string& s, const ToNumberParams<unsigned long>&) { return std::stoul(s); }
 
 std::string operator|(int i, const ToStringParams&) { return (std::stringstream() << i).str(); }
+
+bool isSpaceOrNewLine(char ch) { return std::isspace(ch) || ch == '\n' || ch == '\r'; }
