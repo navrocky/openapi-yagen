@@ -48,6 +48,12 @@ Node jsonToNode(const inja::json& json)
             res[it.key()] = jsonToNode(*it);
         }
         return { res };
+    } else if (json.is_array()) {
+        Node::Vec res;
+        for (auto it = json.begin(); it != json.end(); ++it) {
+            res.push_back(jsonToNode(*it));
+        }
+        return { res };
     } else {
         throw runtime_error(format("<1632f956> Unsupported value: {}", json.type_name()));
     }
