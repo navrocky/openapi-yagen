@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,6 +27,7 @@ public:
 
 private:
     Opts opts;
+    std::map<std::string, std::string> fileCache;
 };
 
 }
