@@ -14,6 +14,8 @@ set(SOURCES
   file_reader.h
   file_writer.cpp
   file_writer.h
+  remote_file_reader_backend.cpp
+  remote_file_reader_backend.h
   tools.cpp
   tools.h
   zip_file_reader_backend.cpp

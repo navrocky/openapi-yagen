@@ -8,6 +8,8 @@ set(SOURCES
   node.h
   node_walker.cpp
   node_walker.h
+  process_executor.cpp
+  process_executor.h
   std_tools.cpp
   std_tools.h
   string_tools.cpp
@@ -18,6 +20,7 @@ set(SOURCES
 
 set(DEPS
   yaml-cpp::yaml-cpp
+  openapi-yagen-lib-logger
 )
 
 add_library(${TARGET} ${SOURCES})

@@ -15,14 +15,21 @@ namespace {
 LogFacade::Logger logger("FS::DirFileReaderBackend");
 }
 
+FileReaderBackendPtr DirFileReaderBackendFactory::createBackend(const std::string& uri)
+{
+    return make_shared<DirFileReaderBackend>(uri);
+}
+
+bool DirFileReaderBackendFactory::isUriSupported(const std::string& uri) { return is_directory(uri); }
+
 DirFileReaderBackend::DirFileReaderBackend(const std::string_view& rootDir)
     : rootDir(rootDir)
 {
-    if (status(rootDir).type() != file_type::directory)
+    if (!is_directory(rootDir))
         throw runtime_error(format("<e6b710fc> Root dir path is not directory: {}", rootDir));
 }
 
-std::optional<string> DirFileReaderBackend::read(const std::string_view& filePath)
+std::optional<string> DirFileReaderBackend::read(const std::string& filePath)
 {
     auto fullPath = path(rootDir) / filePath;
     logger.debug("<06a09bf9> Read file: {}", fullPath.string());

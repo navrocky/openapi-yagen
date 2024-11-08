@@ -83,3 +83,10 @@ renderTemplateToString(
 Renders specified template (`templateFilePath`) in generator folder into string with provided `data` object. 
 Additionally, you can pass a set of JS defined functions (`functions`) that will be available for use in the templates.
 
+## TODO
+
+- [ ] Add schema validation with JSON schema (conan: json-schema-validator/2.3.0)
+- [ ] Add configuration variables
+- [ ] Improve documentation and add more examples
+- [ ] Use https://github.com/batterycenter/embed to embed some popular templates into binary
+- [x] Add remote templates reading (from github for example)

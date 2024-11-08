@@ -1,12 +1,15 @@
 #include "zip_file_reader_backend.h"
 
+#include <filesystem>
 #include <format>
+#include <fstream>
 
 #include <zip/zip.h>
 
 #include "../common/finalize.h"
 
 using namespace std;
+using namespace std::filesystem;
 
 namespace FS {
 
@@ -27,10 +30,9 @@ ZipFileReaderBackend::ZipFileReaderBackend(const std::string& zipPath)
     zip = shared_ptr<zip_t>(res, [](auto z) { zip_close(z); });
 }
 
-std::optional<string> ZipFileReaderBackend::read(const std::string_view& filePath)
+std::optional<string> ZipFileReaderBackend::read(const std::string& filePath)
 {
-    string fp(filePath);
-    auto res = zip_entry_open(zip.get(), fp.c_str());
+    auto res = zip_entry_open(zip.get(), filePath.c_str());
     if (res == ZIP_ENOENT)
         return nullopt;
     if (res != 0)
@@ -44,4 +46,19 @@ std::optional<string> ZipFileReaderBackend::read(const std::string_view& filePat
     return string((char*)buf, size);
 }
 
+FileReaderBackendPtr ZipFileReaderBackendFactory::createBackend(const std::string& uri)
+{
+    return make_shared<ZipFileReaderBackend>(uri);
+}
+
+bool ZipFileReaderBackendFactory::isUriSupported(const std::string& uri)
+{
+    if (!is_regular_file(uri) && !is_symlink(uri))
+        return false;
+    std::ifstream fs(uri, std::ios::binary);
+    std::vector<char> head(4, 0);
+    std::vector<char> zipHead = { 0x50, 0x4b, 0x03, 0x04 };
+    fs.read(head.data(), head.size());
+    return head == zipHead;
+}
 }

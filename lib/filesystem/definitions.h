@@ -7,6 +7,9 @@ namespace FS {
 class FileWriter;
 using FileWriterPtr = std::shared_ptr<FileWriter>;
 
+class FileReaderBackendFactory;
+using FileReaderBackendFactoryPtr = std::shared_ptr<FileReaderBackendFactory>;
+
 class FileReader;
 using FileReaderPtr = std::shared_ptr<FileReader>;
 

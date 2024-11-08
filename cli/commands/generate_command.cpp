@@ -1,9 +1,13 @@
 #include "generate_command.h"
 
+#include <vector>
+
 #include <lib/filesystem/dir_file_reader_backend.h>
 #include <lib/filesystem/dir_file_writer.h>
 #include <lib/filesystem/file_post_processor.h>
+#include <lib/filesystem/remote_file_reader_backend.h>
 #include <lib/filesystem/tools.h>
+#include <lib/filesystem/zip_file_reader_backend.h>
 #include <lib/generator/openapi_generator.h>
 #include <lib/js/executor.h>
 #include <lib/logger/logger.h>
@@ -25,7 +29,7 @@ void GenerateCommand::reg(CLI::App& app)
     cmd->add_option("spec-file", specPath, "Specification file")->default_str("openapi.yaml");
     cmd->add_option("--override-dir", overrideDir, "Directory with overridden generator files");
     cmd->add_option("-o, --out-dir", outDir, "Output directory for generated code")->default_str(".");
-    cmd->add_option("-g, --generator", generatorPath, "Path to generator. It can be directory or zip archive")
+    cmd->add_option("-g, --generator", generatorPath, "Path to generator. It can be directory, zip archive or HTTP URL")
         ->required();
     cmd->add_option("-p, --post-process", postProcessTools, "Post process file with specified tool for extension")
         ->take_all();
@@ -38,7 +42,14 @@ void GenerateCommand::process()
     if (!overrideDir.empty()) {
         fsBackends.push_back(make_shared<FS::DirFileReaderBackend>(overrideDir));
     }
-    fsBackends.push_back(FS::openAutodetectedFileSystem(generatorPath));
+
+    vector<FS::FileReaderBackendFactoryPtr> fileReaderBackendFactories = {
+        make_shared<FS::DirFileReaderBackendFactory>(),
+        make_shared<FS::ZipFileReaderBackendFactory>(),
+        make_shared<FS::RemoteFileReaderBackendFactory>(),
+    };
+
+    fsBackends.push_back(FS::createBackend(generatorPath, fileReaderBackendFactories));
     auto fileReader = make_shared<FS::FileReader>(FS::FileReader::Opts { fsBackends });
 
     auto templateRenderer = make_shared<Templates::InjaTemplateRenderer>(Templates::InjaTemplateRenderer::Opts {

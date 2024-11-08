@@ -2,24 +2,23 @@
 
 #include "file_reader.h"
 
-struct zip_t;
-
 namespace FS {
 
-class ZipFileReaderBackendFactory : public FileReaderBackendFactory {
+class RemoteFileReaderBackendFactory : public FileReaderBackendFactory {
 public:
     FileReaderBackendPtr createBackend(const std::string& uri) override;
     bool isUriSupported(const std::string& uri) override;
 };
 
-class ZipFileReaderBackend : public FileReaderBackend {
+class RemoteFileReaderBackend : public FileReaderBackend {
 public:
-    ZipFileReaderBackend(const std::string& zipPath);
+    RemoteFileReaderBackend(const std::string& baseUrl);
     std::optional<std::string> read(const std::string& filePath) override;
 
 private:
-    std::string zipPath;
-    std::shared_ptr<zip_t> zip;
+    std::string getFileUrl(const std::string& filePath);
+
+    std::string baseUrl;
 };
 
 }

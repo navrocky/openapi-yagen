@@ -32,9 +32,9 @@ public:
         : files(files)
     {
     }
-    std::optional<string> read(const string_view& filePath) override
+    std::optional<string> read(const string& filePath) override
     {
-        auto it = files.find(string(filePath));
+        auto it = files.find(filePath);
         if (it != files.end())
             return it->second;
         else

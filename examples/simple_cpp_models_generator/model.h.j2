@@ -1,0 +1,27 @@
+{% include "head.h.j2" %}
+{% set includes = ["<string>", "<vector>", "<cstdint>", "<optional>"] %}
+{% include "includes.h.j2" %}
+
+namespace OpenApiModels {
+
+{% for schemaKey, schemaValue in schemas %}
+{% if schemaValue.type == "object" %}
+struct {{ schemaKey }} {
+    {% for propKey, propValue in schemaValue.properties %}
+    {{ renderDescriptionComment(propValue) }}
+    {%- if isFieldRequired(propKey, schemaValue.required) -%}
+    {{ mapType(propValue.type) }} {{ propKey }};
+    {%- else -%}
+    std::optional<{{ mapType(propValue.type) }}> {{ propKey }};
+    {%- endif -%}
+    {% endfor %}
+};
+{% endif %}
+{% if schemaValue.type == "array" %}
+{{ renderDescriptionComment(schemaValue) }}
+using {{ schemaKey }} = std::vector<{{ getModelNameByRef(schemaValue.items) }}>;
+{% endif %}
+
+{% endfor %}
+
+}
