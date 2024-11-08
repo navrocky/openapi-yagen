@@ -95,6 +95,25 @@ JSValue renderTemplate(JSContext* ctx, JSValueConst thisVal, int argc, JSValueCo
     });
 }
 
+JSValue renderTemplateToString(
+    JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, JSValue* data)
+{
+    return runAndCatchExceptions(ctx, [&] {
+        const auto& opts = *jsValueToPtr<const OpenApiGenerator::Opts>(*data);
+        if (argc < 2 || argc > 3)
+            throw runtime_error(
+                "<d9d81f4b> renderTemplateToString requires 3 or 4 arguments (templateFileName: string, data: "
+                "object, funcs?: {<funcName>: function(args)})");
+        auto templateFileName = jsValueToString(ctx, argv[0]);
+        Node data = jsValueToNode(ctx, argv[1]);
+        Templates::TemplateRenderer::Functions funcs;
+        if (argc >= 3)
+            funcs = mapJSFuncsToTemplateFuncs(ctx, argv[2]);
+        auto content = opts.templateRenderer->render(templateFileName, data, funcs);
+        return JS_NewStringLen(ctx, content.c_str(), content.size());
+    });
+}
+
 }
 
 OpenApiGenerator::OpenApiGenerator(Opts&& opts)
@@ -115,6 +134,7 @@ void OpenApiGenerator::generate(const string& specPath)
         finalize { JS_FreeValue(ctx, globalObj); };
 
         setObjFunction(ctx, globalObj, "renderTemplate", renderTemplate, optsPtr);
+        setObjFunction(ctx, globalObj, "renderTemplateToString", renderTemplateToString, optsPtr);
         auto v = nodeToJSValue(ctx, schemaNode);
         setObjProperty(ctx, globalObj, "schema", v);
     });

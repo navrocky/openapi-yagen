@@ -8,11 +8,18 @@ using namespace std;
 
 namespace JS {
 
+[[noreturn]]
+void rethrowExcetion(JSContext* ctx, const JSValue& val, const std::string_view& msg)
+{
+    // TODO: attach stacktrace to message
+    js_std_dump_error(ctx);
+    throw runtime_error(string(msg));
+}
+
 void checkForException(JSContext* ctx, const JSValue& val, const std::string_view& msg)
 {
     if (JS_IsException(val)) {
-        js_std_dump_error(ctx);
-        throw runtime_error(string(msg));
+        rethrowExcetion(ctx, val, msg);
     }
 }
 
@@ -122,6 +129,8 @@ Node jsValueToNode(JSContext* ctx, const JSValue& v)
         jsIterateObjectProps(ctx, v,
             [&](const auto& propName, const JSValue& propValue) { res[propName] = jsValueToNode(ctx, propValue); });
         return { res };
+    } else if (JS_IsException(v)) {
+        rethrowExcetion(ctx, v, "<c9c2c575>");
     } else {
         throw runtime_error(format("<d05dbcae> Unsupported JS value: {}", v.tag));
     }

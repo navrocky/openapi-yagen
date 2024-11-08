@@ -35,16 +35,22 @@ inja::json valueToJson(const Node& data)
 
 Node jsonToNode(const inja::json& json)
 {
-    if (json.is_boolean())
+    if (json.is_boolean()) {
         return { json.get<bool>() };
-    if (json.is_string()) {
+    } else if (json.is_string()) {
         auto s = json.get<string>();
         return { s };
-    }
-    if (json.is_number_integer())
+    } else if (json.is_number_integer()) {
         return { json.get<int64_t>() };
-    else
+    } else if (json.is_object()) {
+        Node::Map res;
+        for (auto it = json.begin(); it != json.end(); ++it) {
+            res[it.key()] = jsonToNode(*it);
+        }
+        return { res };
+    } else {
         throw runtime_error(format("<1632f956> Unsupported value: {}", json.type_name()));
+    }
 }
 
 namespace Templates {

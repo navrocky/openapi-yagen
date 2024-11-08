@@ -66,9 +66,20 @@ renderTemplate(
     data: { [key: string]: any }, 
     outFilePath: string,
     functions?: { [name: string]: function }
-)
+): void
 ```
 
 Renders specified template (`templateFilePath`) in generator folder into `outFilePath` with provided `data` object. 
+Additionally, you can pass a set of JS defined functions (`functions`) that will be available for use in the templates.
+
+```typescript
+renderTemplateToString(
+    templateFilePath: string, 
+    data: { [key: string]: any }, 
+    functions?: { [name: string]: function }
+): string
+```
+
+Renders specified template (`templateFilePath`) in generator folder into string with provided `data` object. 
 Additionally, you can pass a set of JS defined functions (`functions`) that will be available for use in the templates.
 
