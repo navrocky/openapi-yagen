@@ -10,6 +10,7 @@
 #include "../common/finalize.h"
 #include "../common/node_walker.h"
 #include "../common/std_tools.h"
+#include "../common/string_tools.h"
 #include "../common/yaml_or_json_parser.h"
 #include "../filesystem/file_reader.h"
 #include "../filesystem/file_writer.h"
@@ -27,6 +28,55 @@ namespace {
 
 namespace {
 LogFacade::Logger logger("OpenApiGenerator");
+
+map<string, string> parseVars(const vector<string>& vars)
+{
+    map<string, string> res;
+    for (const auto& s : vars) {
+        auto p = s.find("=");
+        if (p == string::npos)
+            throw runtime_error(format(
+                "<2f3ad1ca> Invalid variable syntax: two values splitted with \"=\" expected in string \"{}\"", s));
+        auto varName = s.substr(0, p) | trim();
+        auto varValue = s.substr(p + 1, s.size() - p) | trim();
+        if (varName.empty())
+            throw runtime_error("<5de5573d> Variable name required");
+        res[varName] = varValue;
+    }
+    return res;
+}
+
+Node getFinalVars(const vector<string>& vars, const GeneratorMetadata& metadata)
+{
+    Node::Map res;
+    set<string> definedVars;
+    auto parsedVars = parseVars(vars);
+    for (const auto& varDescr : metadata.variables) {
+        auto it = parsedVars.find(varDescr.name);
+        definedVars.insert(varDescr.name);
+        string varValue;
+        if (it == parsedVars.end()) {
+            if (varDescr.required)
+                throw runtime_error(format("<1e9c49a1> Variable required: {}{}", varDescr.name,
+                    (varDescr.description ? " - " + *varDescr.description : "")));
+            if (!varDescr.defaultValue)
+                continue;
+            varValue = *varDescr.defaultValue;
+        } else {
+            varValue = it->second;
+        }
+        logger.debug("<29db917f> Variable: {}={}", varDescr.name, varValue);
+        res[varDescr.name] = { varValue };
+    }
+
+    for (const auto& p : parsedVars) {
+        if (definedVars.find(p.first) == definedVars.end())
+            throw runtime_error(format("<3ca00dee> Variable \"{}\" profided but not defined in metadata", p.first));
+    }
+
+    return { res };
+}
+
 }
 
 Node readSpecFile(const string& filePath)
@@ -129,13 +179,14 @@ void OpenApiGenerator::generate(const string& specPath)
     auto mainScriptPath = metadata.mainScriptPath.value_or(opts.defaultMainSciptPath);
     auto schemaNode = readSpecFile(specPath);
     auto optsPtr = &opts;
-    opts.jsExecutor->execute(mainScriptPath, [&schemaNode, optsPtr](JSContext* ctx) {
+    auto vars = getFinalVars(opts.vars, metadata);
+    opts.jsExecutor->execute(mainScriptPath, [&schemaNode, optsPtr, &vars](JSContext* ctx) {
         auto globalObj = JS_GetGlobalObject(ctx);
         finalize { JS_FreeValue(ctx, globalObj); };
 
         setObjFunction(ctx, globalObj, "renderTemplate", renderTemplate, optsPtr);
         setObjFunction(ctx, globalObj, "renderTemplateToString", renderTemplateToString, optsPtr);
-        auto v = nodeToJSValue(ctx, schemaNode);
-        setObjProperty(ctx, globalObj, "schema", v);
+        setObjProperty(ctx, globalObj, "schema", nodeToJSValue(ctx, schemaNode));
+        setObjProperty(ctx, globalObj, "vars", nodeToJSValue(ctx, vars));
     });
 }

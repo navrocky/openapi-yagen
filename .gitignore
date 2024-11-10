@@ -2,3 +2,4 @@
 /dist
 /CMakeLists.txt.user
 /CMakeUserPresets.json
+/examples/out

@@ -12,7 +12,8 @@ using OptStr = std::optional<std::string>;
 struct VariableDescriptor {
     Str name;
     OptStr description;
-    Node defaultValue;
+    OptStr defaultValue;
+    bool required;
 };
 
 struct GeneratorMetadata {

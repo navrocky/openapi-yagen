@@ -95,7 +95,7 @@ void jsIterateObjectProps(
 
 Node jsValueToNode(JSContext* ctx, const JSValue& v)
 {
-    if (JS_IsNull(v)) {
+    if (JS_IsNull(v) || JS_IsUndefined(v)) {
         return { Node::Null {} };
     } else if (JS_IsBool(v)) {
         auto res = JS_ToBool(ctx, v);

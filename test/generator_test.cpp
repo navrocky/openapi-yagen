@@ -78,6 +78,7 @@ TEST_CASE("Generate", "[generator]")
         .templateRenderer = templateRenderer,
         .defaultMainSciptPath = "main.js",
         .metadataPath = "generator.yml",
+        .vars = { "OPT1=true" },
     });
 
     gen.generate(getResourcePath("petstore.yaml"));

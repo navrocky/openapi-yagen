@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "../filesystem/definitions.h"
 #include "../js/definitions.h"
 #include "../templates/definitions.h"
@@ -14,6 +16,7 @@ public:
         std::string defaultMainSciptPath;
         std::string metadataPath;
         bool clearOutDir = false;
+        std::vector<std::string> vars;
     };
 
     OpenApiGenerator(Opts&& opts);

@@ -1,1 +1,13 @@
-name: gen
+# Generator name
+name: sample_cpp_models
+
+# Generator description
+description: Example of C++ model generator from OpenAPI v3 specification
+
+# Main JavaScript file (entrypoint).
+mainScriptPath: main.js
+
+# Variables that can be used to customize script execution
+variables:
+  - name: namespace
+    description: С++ namespace for model classes

@@ -2,7 +2,7 @@
 {% set includes = ["<string>", "<vector>", "<cstdint>", "<optional>"] %}
 {% include "includes.h.j2" %}
 
-namespace OpenApiModels {
+{% if namespace %} namespace {{ namespace }} { {% endif %}
 
 {% for schemaKey, schemaValue in schemas %}
 {% if schemaValue.type == "object" %}
@@ -24,4 +24,4 @@ using {{ schemaKey }} = std::vector<{{ getModelNameByRef(schemaValue.items) }}>;
 
 {% endfor %}
 
-}
+{% if namespace %}}{% endif %}

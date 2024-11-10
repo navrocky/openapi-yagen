@@ -17,5 +17,6 @@ private:
     std::string format;
     std::string generatorPath;
     std::vector<std::string> postProcessTools;
+    std::vector<std::string> vars;
     bool clearOutDir;
 };

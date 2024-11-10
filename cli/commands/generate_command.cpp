@@ -34,6 +34,7 @@ void GenerateCommand::reg(CLI::App& app)
     cmd->add_option("-p, --post-process", postProcessTools, "Post process file with specified tool for extension")
         ->take_all();
     cmd->add_flag("-c, --clear", clearOutDir, "Clear output directory before generating");
+    cmd->add_option("-v, --var", vars, "Set variable. Syntax is: -v (var_name)=(var_value)")->take_all();
 }
 
 void GenerateCommand::process()
@@ -75,6 +76,7 @@ void GenerateCommand::process()
         .defaultMainSciptPath = "main.js",
         .metadataPath = "generator.yml",
         .clearOutDir = clearOutDir,
+        .vars = vars,
     });
 
     if (specPath.empty())
