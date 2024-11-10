@@ -7,6 +7,8 @@ Main features:
   and [Inja](https://pantor.github.io/inja/) templates (like Jinja)
 - extending templates with additional functions defined in JS
 - possibility to extend existing generators by overriding some files from a specified directory
+- postprocessing of output files using custom tools (code formatters, linters, checkers...).
+- using generators available via HTTP/S (directly from Github, or other sources). The `curl` tool is required.
 
 ## CLI reference
 
