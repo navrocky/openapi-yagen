@@ -26,9 +26,9 @@ void GenerateCommand::reg(CLI::App& app)
     auto cmd = app.add_subcommand("generate", "Generate sources from openapi specification")
                    ->alias("g")
                    ->callback(std::bind(&GenerateCommand::process, this));
-    cmd->add_option("spec-file", specPath, "Specification file")->default_str("openapi.yaml");
+    cmd->add_option("spec-file", specPath, "Specification file")->default_val("openapi.yaml");
     cmd->add_option("--override-dir", overrideDir, "Directory with overridden generator files");
-    cmd->add_option("-o, --out-dir", outDir, "Output directory for generated code")->default_str(".");
+    cmd->add_option("-o, --out-dir", outDir, "Output directory for generated code")->default_val(".");
     cmd->add_option("-g, --generator", generatorPath, "Path to generator. It can be directory, zip archive or HTTP URL")
         ->required();
     cmd->add_option("-p, --post-process", postProcessTools, "Post process file with specified tool for extension")
