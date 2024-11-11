@@ -23,6 +23,7 @@ set(DEPS
   openapi-yagen-lib-logger
 )
 
-add_library(${TARGET} ${SOURCES})
+add_library(${TARGET} ${SOURCES}
+  json_tools.h json_tools.cpp)
 
 target_link_libraries(${TARGET} ${DEPS})

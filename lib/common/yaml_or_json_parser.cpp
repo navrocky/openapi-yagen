@@ -59,4 +59,8 @@ Node convertNode(const YAML::Node& n)
     }
 }
 
-Node parseYamlOrJsonToNode(const std::string& yaml) { return convertNode(YAML::Load(yaml)); }
+Node parseYamlOrJsonToNode(const std::string& yaml)
+{
+    auto node = YAML::Load(yaml);
+    return convertNode(node);
+}

@@ -7,6 +7,9 @@ description: Example of C++ model generator from OpenAPI v3 specification
 # Main JavaScript file (entrypoint).
 mainScriptPath: main.js
 
+# Validation schema
+jsonSchemaPath: openapi_3.1_schema.yaml
+
 # Variables that can be used to customize script execution
 variables:
   - name: namespace

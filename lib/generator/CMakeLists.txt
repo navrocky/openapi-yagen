@@ -1,6 +1,7 @@
 set(TARGET openapi-yagen-lib-generator)
 
 find_package(quickjs REQUIRED)
+find_package(nlohmann_json_schema_validator REQUIRED)
 
 set(SOURCES
   generator_metadata.cpp
@@ -17,6 +18,7 @@ set(DEPS
   openapi-yagen-lib-templates
 )
 
-add_library(${TARGET} ${SOURCES})
+add_library(${TARGET} ${SOURCES}
+  schema_validator.h schema_validator.cpp)
 
-target_link_libraries(${TARGET} ${DEPS})
+target_link_libraries(${TARGET} ${DEPS} nlohmann_json_schema_validator)
