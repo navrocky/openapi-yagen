@@ -1,0 +1,3 @@
+name: generator_with_schema
+mainScriptPath: main.js
+jsonSchemaPath: schema.yaml

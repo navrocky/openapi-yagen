@@ -1,7 +1,6 @@
 #include "openapi_generator.h"
 
 #include <cstring>
-#include <iostream>
 #include <stdexcept>
 
 #include <quickjs/quickjs-libc.h>
@@ -20,6 +19,7 @@
 #include "../logger/logger.h"
 #include "../templates/template_renderer.h"
 #include "generator_metadata.h"
+#include "schema_validator.h"
 
 using namespace std;
 using namespace JS;
@@ -177,7 +177,17 @@ void OpenApiGenerator::generate(const string& specPath)
         opts.fileWriter->clear();
     auto metadata = readMetadata(opts.fileReader, opts.metadataPath);
     auto mainScriptPath = metadata.mainScriptPath.value_or(opts.defaultMainSciptPath);
+
     auto schemaNode = readSpecFile(specPath);
+
+    if (metadata.jsonSchemaPath) {
+        JsonSchemaValidator(JsonSchemaValidator::Opts {
+                                .fileReader = opts.fileReader,
+                                .schemaFilePath = *metadata.jsonSchemaPath,
+                            })
+            .validate(schemaNode);
+    }
+
     auto optsPtr = &opts;
     auto vars = getFinalVars(opts.vars, metadata);
     opts.jsExecutor->execute(mainScriptPath, [&schemaNode, optsPtr, &vars](JSContext* ctx) {

@@ -85,3 +85,55 @@ TEST_CASE("Generate", "[generator]")
 
     REQUIRE_THAT(fileWriter->files["outfile"], Catch::Matchers::ContainsSubstring("#/components/schemas/Pet"));
 }
+
+TEST_CASE("Validate schema", "[generator]")
+{
+    auto fileWriter = make_shared<MockedFileWriter>();
+    auto templateRenderer = make_shared<MockedTemplateRenderer>();
+
+    MockedFileReaderBackend::Files files = {
+        { "main.js", "" },
+        { "generator_with_schema.yml", readResource("generator_with_schema.yml") },
+        { "schema.json", readResource("schema.json") },
+        { "schema.yaml", readResource("schema.yaml") },
+    };
+
+    auto fileReader = make_shared<FileReader>(FileReader::Opts {
+        .backends = { make_shared<MockedFileReaderBackend>(files) },
+    });
+
+    auto jsExecutor = make_shared<JS::Executor>(JS::Executor::Opts {
+        .fileReader = fileReader,
+    });
+
+    SECTION("Success")
+    {
+        OpenApiGenerator gen(OpenApiGenerator::Opts {
+            .fileReader = fileReader,
+            .fileWriter = fileWriter,
+            .jsExecutor = jsExecutor,
+            .templateRenderer = templateRenderer,
+            .defaultMainSciptPath = "main.js",
+            .metadataPath = "generator_with_schema.yml",
+            .vars = {},
+        });
+
+        gen.generate(getResourcePath("petstore.yaml"));
+    }
+
+    SECTION("Fail")
+    {
+        OpenApiGenerator gen(OpenApiGenerator::Opts {
+            .fileReader = fileReader,
+            .fileWriter = fileWriter,
+            .jsExecutor = jsExecutor,
+            .templateRenderer = templateRenderer,
+            .defaultMainSciptPath = "main.js",
+            .metadataPath = "generator_with_schema.yml",
+            .vars = {},
+        });
+
+        // TODO
+        // REQUIRE_THROWS(gen.generate(getResourcePath("test_file")));
+    }
+}
