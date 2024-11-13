@@ -143,3 +143,4 @@ Example generators are located in the `examples` folder.
 - [x] Add remote templates reading (from github for example)
 - [ ] Command to create generator stub
 - [ ] Command to show available variables for generator
+- [ ] Restrict access to files outside working folder
