@@ -88,6 +88,22 @@ std::string InjaTemplateRenderer::render(const std::string& filePath, const Node
         });
     }
 
+    env.add_callback("dump", [&](inja::Arguments& args) {
+        auto argNodes = args | mapToVector([](auto arg) { return jsonToNode(*arg); });
+
+        bool first = true;
+        stringstream ss;
+        for (const auto& n : argNodes) {
+            if (!first)
+                ss << ", ";
+            else
+                first = false;
+            ss << n;
+        }
+        logger.info("<10c1e269> Dump: {}", ss.str());
+        return nullptr;
+    });
+
     auto jsonData = valueToJson(data);
     return env.render(tmpl, jsonData);
 }

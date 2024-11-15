@@ -9,6 +9,7 @@
 struct {{ schemaKey }} {
     {% for propKey, propValue in schemaValue.properties %}
     {{ renderDescriptionComment(propValue) }}
+    {{ dump("aaa", schemaValue) }}
     {%- if isFieldRequired(propKey, schemaValue.required) -%}
     {{ mapType(propValue.type) }} {{ propKey }};
     {%- else -%}
