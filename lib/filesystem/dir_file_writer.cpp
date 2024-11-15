@@ -47,6 +47,8 @@ void DirFileWriter::write(const std::string& fileName, const std::string& conten
 
 void DirFileWriter::clear()
 {
+    if (!filesystem::exists(opts.outDir))
+        return;
     for (const auto& entry : filesystem::directory_iterator(opts.outDir)) {
         auto fn = entry.path().filename();
         if (fn != "." && fn != "..")
