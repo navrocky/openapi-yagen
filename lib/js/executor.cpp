@@ -48,7 +48,7 @@ Executor::~Executor() { JS_FreeRuntime(runtime); }
 
 void Executor::execute(const std::string& file, const ContextConfigurator& contextConfigurator)
 {
-    logger.debug("<bfecc0f Executing: {}", file);
+    logger.debug("<bfecc0f> Executing: {}", file);
     auto ctx = JS_NewContext(runtime);
     finalize { JS_FreeContext(ctx); };
 

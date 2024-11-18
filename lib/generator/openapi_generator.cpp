@@ -188,5 +188,6 @@ void OpenApiGenerator::generate(const string& specPath)
         setObjFunction(ctx, globalObj, "renderTemplateToString", renderTemplateToString, optsPtr);
         setObjProperty(ctx, globalObj, "schema", nodeToJSValue(ctx, schemaNode));
         setObjProperty(ctx, globalObj, "vars", nodeToJSValue(ctx, vars));
+        addDumpFunction(ctx, globalObj);
     });
 }

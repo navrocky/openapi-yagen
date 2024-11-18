@@ -88,14 +88,14 @@ variables:
 The generator core supports all modern JavaScript features from ES2023 (string interpolation, classes, let, const, 
 modules ...) thanks to QuickJS. 
 
-### Integrated functions
+### Built-in functions
 
-#### console
+#### dump
 
-Support for console.log() for debugging.
+Dumps specified values to log output. It is a replacement for `console.log`.
 
 ```typescript
-console.log(...args: any)
+dump(...args: any)
 ```
 
 #### renderTemplate
@@ -125,10 +125,21 @@ renderTemplateToString(
 ): string
 ```
 
+
 ## Templating reference
 
 `Inja` is used as the template rendering engine. The main documentation can be found here
 https://pantor.github.io/inja/
+
+### Built-in functions
+
+#### dump
+
+Dumps specified values to log output.
+
+```
+{{ dump(...args: any) }}
+```
 
 ## Example generators 
 

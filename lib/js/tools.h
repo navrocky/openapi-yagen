@@ -82,4 +82,6 @@ void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, JSCFun
 void jsIterateObjectProps(
     JSContext* ctx, const JSValue& v, const std::function<void(const std::string& name, const JSValue& value)>& block);
 
+void addDumpFunction(JSContext* ctx, const JSValue& obj);
+
 }

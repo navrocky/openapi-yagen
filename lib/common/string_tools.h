@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,10 @@ unsigned long operator|(const std::string& s, const ToNumberParams<unsigned long
 struct ToStringParams { };
 inline ToStringParams toString() { return {}; }
 
-std::string operator|(int i, const ToStringParams&);
+template <typename T>
+std::string operator|(const T& t, const ToStringParams&) {
+    return (std::stringstream() << t).str();
+}
 
 bool isSpaceOrNewLine(char ch);
 
@@ -52,9 +56,9 @@ inline auto ltrim(char ch) -> auto
 }
 
 template <CharTestFunc Func>
-std::string operator|(const std::string& s, const LeftTrimParams<Func>& params)
+std::string operator|(const std::string& t, const LeftTrimParams<Func>& params)
 {
-    auto res = s;
+    auto res = t;
     auto it = std::find_if(res.begin(), res.end(), [&](auto ch) { return !params.testChar(ch); });
     res.erase(res.begin(), it);
     return res;
@@ -100,4 +104,24 @@ std::string operator|(const std::string& s, const TrimParams<Func>& params)
     res.erase(rightIt, res.end());
     res.erase(res.begin(), leftIt);
     return res;
+}
+
+struct JoinToStringParams {
+    const std::string_view& delimiter;
+};
+inline JoinToStringParams joinToString(const std::string_view& delimiter) { return { delimiter }; }
+
+template <typename Iterable>
+std::string operator|(const Iterable& iterable, const JoinToStringParams& params)
+{
+    std::stringstream ss;
+    bool first = true;
+    for (const auto& v : iterable) {
+        if (first)
+            first = false;
+        else
+            ss << params.delimiter;
+        ss << v;
+    }
+    return ss.str();
 }

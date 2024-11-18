@@ -1,12 +1,19 @@
 #include "tools.h"
 
+#include <ranges>
+
 #include <quickjs/quickjs-libc.h>
 
 #include "../common/finalize.h"
+#include "../common/string_tools.h"
+#include "../logger/logger.h"
 
 using namespace std;
 
 namespace JS {
+namespace {
+LogFacade::Logger logger("JS::Tools");
+}
 
 [[noreturn]]
 void rethrowException(JSContext* ctx, const JSValue& val, const std::string_view& msg)
@@ -171,4 +178,21 @@ JSValueWrapper::JSValueWrapper(JSValueWrapper&& w)
 {
     w.empty = true;
 }
+
+JSValue jsDump(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, JSValue* data)
+{
+    return runAndCatchExceptions(ctx, [&] {
+        logger.info("<43911519> Dump: {}", views::counted(argv, argc) | views::transform([&](const auto& v) {
+            return jsValueToNode(ctx, v);
+        }) | joinToString(", "));
+        return JS_NewBool(ctx, true);
+    });
+}
+
+void addDumpFunction(JSContext* ctx, const JSValue& obj)
+{
+    auto f = JS_NewCFunctionData(ctx, jsDump, 0, 0, 0, nullptr);
+    setObjProperty(ctx, obj, "dump", f);
+}
+
 }
