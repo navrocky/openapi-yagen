@@ -6,11 +6,14 @@
 namespace LogFacade {
 
 enum class LogLevel {
+    TRACE,
     DEBUG,
     INFO,
     WARN,
     ERROR,
 };
+
+LogLevel strToLogLevel(const std::string& s);
 
 class LoggerBackend {
 public:
@@ -25,6 +28,14 @@ public:
     void write(LogLevel level, const std::string& message);
 
     bool isLevelEnabled(LogLevel level) const;
+
+    template <typename... Args>
+    inline void trace(std::format_string<Args...> msg, Args&&... args)
+    {
+        write(LogLevel::TRACE, std::format(msg, std::forward<Args>(args)...));
+    }
+
+    inline void trace(const std::string& msg) { write(LogLevel::TRACE, msg); }
 
     template <typename... Args>
     inline void debug(std::format_string<Args...> msg, Args&&... args)

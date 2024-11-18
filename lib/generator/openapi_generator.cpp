@@ -1,5 +1,6 @@
 #include "openapi_generator.h"
 
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -173,6 +174,14 @@ OpenApiGenerator::OpenApiGenerator(Opts&& opts)
 
 void OpenApiGenerator::generate(const string& specPath)
 {
+    auto startTime = chrono::high_resolution_clock::now();
+    finalize
+    {
+        auto endTime = chrono::high_resolution_clock::now();
+        logger.debug(
+            "<eb2395fc> Generation time: {} msec", chrono::duration<double, milli>(endTime - startTime).count());
+    };
+
     if (opts.clearOutDir)
         opts.fileWriter->clear();
     auto metadata = readMetadata(opts.fileReader, opts.metadataPath);

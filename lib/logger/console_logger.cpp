@@ -1,6 +1,6 @@
 #include "console_logger.h"
 
-#include <cstdint>
+#include <chrono>
 #include <format>
 #include <iostream>
 
@@ -14,9 +14,16 @@ void ConsoleLogger::write(LogFacade::LogLevel level, const std::string& name, co
 {
     string levelName;
 
+    cout << tc::green << format("{:%T} ", chrono::time_point_cast<chrono::milliseconds>(chrono::system_clock::now()))
+         << tc::reset;
+
     switch (level) {
-        case LogFacade::LogLevel::DEBUG:
+        case LogFacade::LogLevel::TRACE:
             cout << tc::bright_grey;
+            levelName = "TRACE";
+            break;
+        case LogFacade::LogLevel::DEBUG:
+            cout << tc::white;
             levelName = "DEBUG";
             break;
         case LogFacade::LogLevel::INFO:
@@ -32,5 +39,6 @@ void ConsoleLogger::write(LogFacade::LogLevel level, const std::string& name, co
             levelName = "ERROR";
             break;
     }
-    cout << format("[{:5}]", levelName) << tc::reset << format(" {} - {}", name, message) << endl;
+    cout << format("[{:5}]", levelName) << tc::reset << " " << tc::bright_white << name << tc::reset
+         << format(" - {}", message) << endl;
 }

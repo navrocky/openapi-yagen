@@ -86,11 +86,11 @@ std::string InjaTemplateRenderer::render(const std::string& filePath, const Node
         env.add_callback(func.name, [func](inja::Arguments& args) {
             auto argNodes = args | mapToVector([](auto arg) { return jsonToNode(*arg); });
             if (logger.isLevelEnabled(LogFacade::LogLevel::DEBUG)) {
-                logger.debug("<16e600d1> Call JS func: name={}, args={}", func.name, argNodes | joinToString(","));
+                logger.trace("<16e600d1> Call JS func: name={}, args={}", func.name, argNodes | joinToString(","));
             }
             auto res = func.func(argNodes);
             if (logger.isLevelEnabled(LogFacade::LogLevel::DEBUG)) {
-                logger.debug("<607e470e> JS func call result: name={}, result={}", func.name, res | toString());
+                logger.trace("<607e470e> JS func call result: name={}, result={}", func.name, res | toString());
             }
             return valueToJson(res);
         });

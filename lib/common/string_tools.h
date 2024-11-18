@@ -30,7 +30,8 @@ struct ToStringParams { };
 inline ToStringParams toString() { return {}; }
 
 template <typename T>
-std::string operator|(const T& t, const ToStringParams&) {
+std::string operator|(const T& t, const ToStringParams&)
+{
     return (std::stringstream() << t).str();
 }
 
@@ -125,3 +126,7 @@ std::string operator|(const Iterable& iterable, const JoinToStringParams& params
     }
     return ss.str();
 }
+
+struct AnsiToLowerParams { };
+inline AnsiToLowerParams ansiToLower() { return {}; }
+std::string operator|(const std::string& s, const AnsiToLowerParams& params);

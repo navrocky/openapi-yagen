@@ -1,6 +1,7 @@
 #pragma once
 
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 struct ToSetParams { };
@@ -47,4 +48,15 @@ std::vector<T> operator|(const Iterable& iterable, const MapToVecParams<Mapper>&
         res.push_back(params.mapper(v));
     }
     return res;
+}
+
+struct FirstOrThrowParams { };
+inline FirstOrThrowParams firstOrThrow() { return {}; }
+
+template <typename Iterable, typename T = typename Iterable::value_type>
+T operator|(const Iterable& iterable, const FirstOrThrowParams&)
+{
+    if (iterable.empty())
+        throw std::runtime_error("<216313e7> Iterable is empty");
+    return *iterable.begin();
 }

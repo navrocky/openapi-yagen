@@ -137,7 +137,7 @@ Node jsValueToNode(JSContext* ctx, const JSValue& v)
             [&](const auto& propName, const JSValue& propValue) { res[propName] = jsValueToNode(ctx, propValue); });
         return { res };
     } else if (JS_IsException(v)) {
-        rethrowException(ctx, v, "<c9c2c575>");
+        rethrowException(ctx, v, "<c9c2c575> JS exception");
     } else {
         throw runtime_error(format("<d05dbcae> Unsupported JS value: {}", v.tag));
     }

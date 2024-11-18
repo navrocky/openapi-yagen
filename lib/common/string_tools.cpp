@@ -19,3 +19,10 @@ int operator|(const std::string& s, const ToNumberParams<int>&) { return std::st
 unsigned long operator|(const std::string& s, const ToNumberParams<unsigned long>&) { return std::stoul(s); }
 
 bool isSpaceOrNewLine(char ch) { return std::isspace(ch) || ch == '\n' || ch == '\r'; }
+
+std::string operator|(const std::string& s, const AnsiToLowerParams& params)
+{
+    auto lowered = s;
+    std::transform(s.begin(), s.end(), lowered.begin(), [](char c) { return (char)std::tolower(c); });
+    return lowered;
+}

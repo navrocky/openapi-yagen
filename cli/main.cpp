@@ -3,10 +3,12 @@
 
 #include <CLI/CLI.hpp>
 
-#include "commands/generate_command.h"
-#include "config.h"
+#include <lib/common/std_tools.h>
 #include <lib/logger/console_logger.h>
 #include <lib/logger/logger.h>
+
+#include "commands/generate_command.h"
+#include "config.h"
 
 using namespace std;
 using namespace LogFacade;
@@ -17,7 +19,7 @@ int main(int argc, char** argv)
 {
     ConsoleLogger consoleLogger;
     setLogBackend(&consoleLogger);
-    setLogLevel(LogLevel::DEBUG);
+    setLogLevel(LogLevel::INFO);
 
     Logger log("main");
     try {
@@ -29,6 +31,15 @@ int main(int argc, char** argv)
         for (const auto& cmd : commands) {
             cmd->reg(app);
         }
+        app.require_subcommand();
+        app.add_option(
+               "-l, --log-level",
+               [](const auto& v) {
+                   setLogLevel(LogFacade::strToLogLevel(v | firstOrThrow()));
+                   return true;
+               },
+               "Set log level. Supported values: TRACE, DEBUG, INFO, WARN, ERROR")
+            ->default_val("INFO");
 
         CLI11_PARSE(app, argc, argv);
 
