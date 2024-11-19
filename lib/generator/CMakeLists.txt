@@ -3,6 +3,8 @@ set(TARGET openapi-yagen-lib-generator)
 find_package(quickjs REQUIRED)
 
 set(SOURCES
+  functions.cpp
+  functions.h
   generator_metadata.cpp
   generator_metadata.h
   openapi_generator.cpp

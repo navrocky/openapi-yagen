@@ -71,7 +71,7 @@ TEST_CASE("Generate", "[generator]")
         .fileReader = fileReader,
     });
 
-    OpenApiGenerator gen(OpenApiGenerator::Opts {
+    Generator::OpenApiGenerator gen(Generator::OpenApiGenerator::Opts {
         .fileReader = fileReader,
         .fileWriter = fileWriter,
         .jsExecutor = jsExecutor,

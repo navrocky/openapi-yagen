@@ -6,6 +6,8 @@
 #include "../js/definitions.h"
 #include "../templates/definitions.h"
 
+namespace Generator {
+
 class OpenApiGenerator {
 public:
     struct Opts {
@@ -23,8 +25,9 @@ public:
 
     void generate(const std::string& specPath);
 
-private:
     Opts opts;
 };
 
 using GeneratorPtr = std::shared_ptr<OpenApiGenerator>;
+
+}

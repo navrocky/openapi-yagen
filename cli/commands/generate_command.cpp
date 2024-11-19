@@ -68,7 +68,7 @@ void GenerateCommand::process()
         .fileReader = fileReader,
     });
 
-    OpenApiGenerator g(OpenApiGenerator::Opts {
+    Generator::OpenApiGenerator g(Generator::OpenApiGenerator::Opts {
         .fileReader = fileReader,
         .fileWriter = fileWriter,
         .jsExecutor = jsExecutor,

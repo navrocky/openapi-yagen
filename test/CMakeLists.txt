@@ -8,6 +8,7 @@ set(SOURCES
     common/main.cpp
     common/tools.cpp
     common/tools.h
+    common_test.cpp
     generator_test.cpp
     parser_test.cpp
     vfs_test.cpp

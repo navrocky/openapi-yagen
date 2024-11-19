@@ -4,6 +4,7 @@ find_package(yaml-cpp REQUIRED)
 
 set(SOURCES
   finalize.h
+  function.h
   node.cpp
   node.h
   node_walker.cpp

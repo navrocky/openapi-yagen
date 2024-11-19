@@ -6,6 +6,7 @@
 
 #include <quickjs/quickjs.h>
 
+#include "../common/function.h"
 #include "../common/node.h"
 
 namespace JS {
@@ -79,9 +80,12 @@ void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, JSCFun
     setObjProperty(ctx, obj, name, f);
 }
 
+void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, JSCFunction* func);
+
+/// WARNING: not own func
+void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, const FuncType& func);
+
 void jsIterateObjectProps(
     JSContext* ctx, const JSValue& v, const std::function<void(const std::string& name, const JSValue& value)>& block);
-
-void addDumpFunction(JSContext* ctx, const JSValue& obj);
 
 }

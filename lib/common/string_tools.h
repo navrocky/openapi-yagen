@@ -130,3 +130,13 @@ std::string operator|(const Iterable& iterable, const JoinToStringParams& params
 struct AnsiToLowerParams { };
 inline AnsiToLowerParams ansiToLower() { return {}; }
 std::string operator|(const std::string& s, const AnsiToLowerParams& params);
+
+struct AnsiToUpperParams { };
+inline AnsiToUpperParams ansiToUpper() { return {}; }
+std::string operator|(const std::string& s, const AnsiToUpperParams& params);
+
+std::vector<std::string> splitToWords(const std::string& s);
+std::string toSnakeCase(const std::string& s);
+std::string toScreamingSnakeCase(const std::string& s);
+std::string toCamelCase(const std::string& s);
+std::string toPascalCase(const std::string& s);

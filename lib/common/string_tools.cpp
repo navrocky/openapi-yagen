@@ -1,5 +1,7 @@
 #include "string_tools.h"
 
+#include <ranges>
+
 using namespace std;
 
 std::vector<std::string_view> operator|(const std::string_view& s, const StringSplitParams& p)
@@ -22,7 +24,92 @@ bool isSpaceOrNewLine(char ch) { return std::isspace(ch) || ch == '\n' || ch == 
 
 std::string operator|(const std::string& s, const AnsiToLowerParams& params)
 {
-    auto lowered = s;
-    std::transform(s.begin(), s.end(), lowered.begin(), [](char c) { return (char)std::tolower(c); });
-    return lowered;
+    auto res = s;
+    std::transform(s.begin(), s.end(), res.begin(), [](char c) { return (char)std::tolower(c); });
+    return res;
+}
+
+std::string operator|(const std::string& s, const AnsiToUpperParams& params)
+{
+    auto res = s;
+    std::transform(s.begin(), s.end(), res.begin(), [](char c) { return (char)std::toupper(c); });
+    return res;
+}
+
+vector<string> splitToWords(const string& s)
+{
+    char prevCh = '\0';
+    unsigned int start = 0;
+    vector<string> words;
+
+    auto takeWord = [&start, &s, &words](int i) {
+        if (i - start <= 0)
+            return;
+        auto ss = s.substr(start, i - start);
+        words.push_back(ss | ansiToLower());
+    };
+
+    auto isDelimiter = [](char ch) { return ch == '_' || ch == '-' || ch == '.' || ch == ' '; };
+
+    for (unsigned int i = 0; i < s.size(); i++) {
+        char ch = s[i];
+        bool splitNeeded = false;
+        int skipChar = 0;
+        if (islower(prevCh) && !islower(ch)) {
+            splitNeeded = true;
+        }
+
+        while (isDelimiter(ch)) {
+            splitNeeded = true;
+            i++;
+            skipChar++;
+            if (i >= s.size())
+                break;
+            ch = s[i];
+        }
+
+        if (splitNeeded) {
+            takeWord(i - skipChar);
+            start = i;
+        }
+        prevCh = ch;
+    }
+    takeWord(s.size());
+    return words;
+}
+
+string capitalize(const string& s)
+{
+    string res = s;
+    if (!res.empty())
+        res[0] = toupper(res[0]);
+    return res;
+}
+
+string toPascalCase(const std::string& s)
+{
+    return splitToWords(s) | views::transform([](const auto& w) { return capitalize(w); }) | joinToString("");
+}
+
+string toSnakeCase(const std::string& s)
+{
+    return splitToWords(s) | views::transform([](const auto& w) { return w | ansiToLower(); }) | joinToString("_");
+}
+
+string toScreamingSnakeCase(const std::string& s)
+{
+    return splitToWords(s) | views::transform([](const auto& w) { return w | ansiToUpper(); }) | joinToString("_");
+}
+
+string toCamelCase(const std::string& s)
+{
+    bool first = true;
+    return splitToWords(s) | views::transform([&](const auto& w) {
+        if (first) {
+            first = false;
+            return w;
+        } else {
+            return capitalize(w);
+        }
+    }) | joinToString("");
 }

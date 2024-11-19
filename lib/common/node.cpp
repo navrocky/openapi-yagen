@@ -2,6 +2,12 @@
 
 #include <ostream>
 
+template <>
+std::string_view getTypeName<std::string>()
+{
+    return "std::string";
+}
+
 std::ostream& operator<<(std::ostream& os, const Node::Null& n)
 {
     os << "null";

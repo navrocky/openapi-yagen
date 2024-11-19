@@ -3,7 +3,6 @@
 #include <inja/inja.hpp>
 
 #include "../common/std_tools.h"
-#include "../common/string_tools.h"
 #include "../filesystem/file_reader.h"
 #include "../logger/logger.h"
 
@@ -85,32 +84,10 @@ std::string InjaTemplateRenderer::render(const std::string& filePath, const Node
     for (const auto& func : funcs) {
         env.add_callback(func.name, [func](inja::Arguments& args) {
             auto argNodes = args | mapToVector([](auto arg) { return jsonToNode(*arg); });
-            if (logger.isLevelEnabled(LogFacade::LogLevel::DEBUG)) {
-                logger.trace("<16e600d1> Call JS func: name={}, args={}", func.name, argNodes | joinToString(","));
-            }
             auto res = func.func(argNodes);
-            if (logger.isLevelEnabled(LogFacade::LogLevel::DEBUG)) {
-                logger.trace("<607e470e> JS func call result: name={}, result={}", func.name, res | toString());
-            }
             return valueToJson(res);
         });
     }
-
-    env.add_callback("dump", [&](inja::Arguments& args) {
-        auto argNodes = args | mapToVector([](auto arg) { return jsonToNode(*arg); });
-
-        bool first = true;
-        stringstream ss;
-        for (const auto& n : argNodes) {
-            if (!first)
-                ss << ", ";
-            else
-                first = false;
-            ss << n;
-        }
-        logger.info("<10c1e269> Dump: {}", ss.str());
-        return nullptr;
-    });
 
     auto jsonData = valueToJson(data);
     return env.render(tmpl, jsonData);

@@ -5,7 +5,7 @@
 #include <quickjs/quickjs-libc.h>
 
 #include "../common/finalize.h"
-#include "../common/string_tools.h"
+#include "../common/std_tools.h"
 #include "../logger/logger.h"
 
 using namespace std;
@@ -179,20 +179,23 @@ JSValueWrapper::JSValueWrapper(JSValueWrapper&& w)
     w.empty = true;
 }
 
-JSValue jsDump(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic, JSValue* data)
+void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, JSCFunction* func)
 {
-    return runAndCatchExceptions(ctx, [&] {
-        logger.info("<43911519> Dump: {}", views::counted(argv, argc) | views::transform([&](const auto& v) {
-            return jsValueToNode(ctx, v);
-        }) | joinToString(", "));
-        return JS_NewBool(ctx, true);
-    });
+    auto f = JS_NewCFunction(ctx, func, name.c_str(), name.size());
+    setObjProperty(ctx, obj, name, f);
 }
 
-void addDumpFunction(JSContext* ctx, const JSValue& obj)
+JSValue jsFunc(JSContext* ctx, JSValue this_val, int argc, JSValue* argv, int magic, JSValue* data)
 {
-    auto f = JS_NewCFunctionData(ctx, jsDump, 0, 0, 0, nullptr);
-    setObjProperty(ctx, obj, "dump", f);
+    const auto& unpackedThis = *jsValueToPtr<const FuncType>(*data);
+    auto args
+        = views::counted(argv, argc) | views::transform([ctx](auto a) { return jsValueToNode(ctx, a); }) | toVector();
+    return nodeToJSValue(ctx, unpackedThis(args));
+}
+
+void setObjFunction(JSContext* ctx, JSValue obj, const std::string& name, const FuncType& func)
+{
+    setObjFunction(ctx, obj, name, jsFunc, &func);
 }
 
 }
