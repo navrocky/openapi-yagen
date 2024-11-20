@@ -63,7 +63,7 @@ Example:
 
 The file `generator.yml` is a descriptor of the generator. This is a example file with comments:
 
-```
+```yaml
 # Generator name
 name: sample_cpp_models
 
@@ -146,7 +146,7 @@ https://pantor.github.io/inja/
 
 You can call common built-in functions described above in this way:
 
-```
+```jinja
 {% set value = toSnakeCase("FirstSecondThird") %}
 {{ dump(value) }}
 ```
