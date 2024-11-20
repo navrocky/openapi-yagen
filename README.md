@@ -82,13 +82,9 @@ variables:
     description: С++ namespace for model classes
 ```
 
+### Common built-in functions
 
-## JavaScript reference
-
-The generator core supports all modern JavaScript features from ES2023 (string interpolation, classes, let, const, 
-modules ...) thanks to QuickJS. 
-
-### Built-in functions
+These functions are available in both JavaScript and template code.
 
 #### dump
 
@@ -97,6 +93,24 @@ Dumps specified values to log output. It is a replacement for `console.log`.
 ```typescript
 dump(...args: any)
 ```
+
+#### toCamelCase, toPascalCase, toSnakeCase, toScreamingSnakeCase
+
+Converts string identifier from any case convention to specified case convention.
+
+```typescript
+toCamelCase(s: string): string // -> camelCase
+toPascalCase(s: string): string // -> PascalCase
+toSnakeCase(s: string): string // -> snake_case
+toScreamingSnakeCase(s: string): string // SCREAMING_SNAKE_CASE
+```
+
+## JavaScript reference
+
+The generator core supports all modern JavaScript features from ES2023 (string interpolation, classes, let, const, 
+modules ...) thanks to QuickJS. 
+
+### Built-in functions
 
 #### renderTemplate
 
@@ -125,20 +139,16 @@ renderTemplateToString(
 ): string
 ```
 
-
 ## Templating reference
 
 `Inja` is used as the template rendering engine. The main documentation can be found here
 https://pantor.github.io/inja/
 
-### Built-in functions
-
-#### dump
-
-Dumps specified values to log output.
+You can call common built-in functions described above in this way:
 
 ```
-{{ dump(...args: any) }}
+{% set value = toSnakeCase("FirstSecondThird") %}
+{{ dump(value) }}
 ```
 
 ## Example generators 
