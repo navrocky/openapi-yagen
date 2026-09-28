@@ -280,3 +280,37 @@ already-released version sections.
 Order the entries in three groups, in this order: new features first, then changes to existing
 behavior (including docs/process changes), then bug fixes last. Within each group, keep entries in
 newest-first order (their original relative order).
+
+### "Make a release"
+
+A release is an annotated `x.y.z` git tag (no `v` prefix). Pushing it runs
+`.github/workflows/build.yml`: it builds the static Linux amd64/arm64 and macOS binaries, publishes
+them on a GitHub Release for that tag, and pushes the runtime Docker image as
+`ghcr.io/openapi-yagen/openapi-yagen:<x.y.z>` and `:latest`. The CLI's `--version` comes from the
+same tag via `git describe` (see "Architecture" above). Never create or push a tag unless explicitly
+asked to make a release.
+
+1. Pull fresh tags: `git fetch --tags --force origin` (a tag may have been created or moved on
+   GitHub).
+2. Run `./update_changelog_from_git.sh`: it inserts a `# X.X.X (<today>)` heading on top of
+   `CHANGELOG.md` with one `- ` bullet per commit subject since the last version in the file (it
+   refuses to run while an `X.X.X` section is still there).
+3. Tidy up that new section (see "Tidy up CHANGELOG" above).
+4. Pick the version from the last tag (`git tag -l`): only bug fixes -> patch (`1.0.0` ->
+   `1.0.1`); anything new -> minor (`1.0.0` -> `1.1.0`); a change that breaks existing
+   users - a removed/renamed CLI flag, generator variable, or JS/template built-in, or generated
+   code whose public API changes incompatibly for an existing spec - -> major (`1.0.0` -> `2.0.0`).
+   **Stop here and ask the user which version to release** - don't pick it silently. Propose the
+   version the rules above point to and explain why: which changelog entries make it a patch,
+   minor, or major bump (e.g. "2.0.0: the go_net_http_server raw-body handler signatures changed").
+   Wait for the answer: the user either approves the proposed version or names a different one -
+   use whichever they choose. Only then replace `X.X.X` in the heading with it.
+5. Commit only `CHANGELOG.md`, as `Release v<x.y.z>`.
+6. Create an annotated tag on that commit whose message is exactly that release's changelog
+   bullets (no heading), written to a file first - one unwrapped line per bullet, not passed via
+   `-m` - then push the commit and the tag:
+
+   ```bash
+   git tag -a <x.y.z> -F <message-file>
+   git push origin HEAD <x.y.z>
+   ```
