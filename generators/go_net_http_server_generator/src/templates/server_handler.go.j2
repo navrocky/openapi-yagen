@@ -12,3 +12,17 @@ import (
 {% for op in operations %}{% if op.docComment %}{{ op.docComment | indent("\t", true) }}
 {% endif %}	{{ op.name }}({{ op.signature }}) ({% if op.returnsValue %}{{ op.response.type }}, {% endif %}error)
 {% endfor %}}
+{% for op in operations %}{% if op.response.variants %}
+// {{ op.response.type }} is one of {{ op.name }}'s success responses - return exactly one of:
+{% for v in op.response.variants %}// {{ v.typeName }} ({{ v.statusCode }}){% if not loop.is_last %},{% else %}.{% endif %}
+{% endfor %}type {{ op.response.type }} interface {
+	{{ op.response.markerMethod }}()
+}
+{% for v in op.response.variants %}
+{{ v.docComment }}
+type {{ v.typeName }} struct{% if v.type %} {
+	Body {{ v.type }}
+}{% else %}{}{% endif %}
+
+func ({{ v.typeName }}) {{ op.response.markerMethod }}() {}
+{% endfor %}{% endif %}{% endfor %}

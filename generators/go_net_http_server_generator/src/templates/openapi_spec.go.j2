@@ -8,10 +8,16 @@ import (
 //go:embed openapi.json
 var openApiSpecJSON []byte
 
+// OpenAPISpec returns the OpenAPI document this package was generated from, as JSON - the same
+// bytes RegisterOpenApiSpecRoute serves. The returned slice is shared; don't modify it.
+func OpenAPISpec() []byte {
+	return openApiSpecJSON
+}
+
 // RegisterOpenApiSpecRoute registers a route serving the OpenAPI document this package was
 // generated from - the bytes are compiled into the binary at build time (see openapi.json next to
 // this file), not read from disk at request time.
-func RegisterOpenApiSpecRoute(mux *http.ServeMux) {
+func RegisterOpenApiSpecRoute(mux Router) {
 	mux.HandleFunc({{ openApiSpecPatternLiteral }}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(openApiSpecJSON)

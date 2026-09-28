@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,22 @@ import (
 
 	"{{ packageName }}/models"
 )
+
+// Router is what RegisterXRoutes registers operations onto - *http.ServeMux satisfies it as-is. Pass
+// your own implementation to wrap a mux (e.g. to record, instrument, or prefix every route).
+type Router interface {
+	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
+}
+
+// Route describes one generated operation route: its HTTP method, its path template exactly as
+// declared in the OpenAPI document (e.g. "/pets/{petId}"), its operationId (empty if the document
+// doesn't declare one), and the OpenAPI tag it's grouped under.
+type Route struct {
+	Method      string
+	Path        string
+	OperationID string
+	Tag         string
+}
 
 func parseString(s string) (string, error) { return s, nil }
 
@@ -229,6 +247,133 @@ func decodeOptionalJSONBody[T any](r *http.Request) (*T, error) {
 	return &v, nil
 }
 
+// BinaryBody is a raw (non-JSON, non-form, non-text) request body, handed to the handler still
+// unread - read it as a stream (it's an io.Reader), or call Bytes() to buffer it whole. Its
+// Content-Type has already been checked against the media type the operation declares.
+type BinaryBody struct {
+	// ContentType is the request's media type, without parameters (e.g. "application/octet-stream").
+	ContentType string
+	// ContentLength is the request's declared body length, or -1 if unknown (chunked transfer).
+	ContentLength int64
+	// Header is the full set of request headers.
+	Header http.Header
+
+	w http.ResponseWriter
+	r *http.Request
+}
+
+// Read reads the request body directly from the connection, without buffering it in memory.
+func (b *BinaryBody) Read(p []byte) (int, error) { return b.r.Body.Read(p) }
+
+// Limit caps how many bytes can still be read from the body: reading past n bytes fails with an
+// *http.MaxBytesError (mapped to 413 by DefaultErrorHandler when returned from the handler) and
+// closes the connection once the response is written. Call it before reading.
+func (b *BinaryBody) Limit(n int64) { b.r.Body = http.MaxBytesReader(b.w, b.r.Body, n) }
+
+// Bytes reads the whole remaining body into memory.
+func (b *BinaryBody) Bytes() ([]byte, error) { return io.ReadAll(b) }
+
+// UnsupportedMediaTypeError is returned when a raw request body's Content-Type doesn't match the
+// media type the operation declares - mapped to 415 by DefaultErrorHandler.
+type UnsupportedMediaTypeError struct {
+	Expected string
+	Actual   string
+}
+
+func (e *UnsupportedMediaTypeError) Error() string {
+	return fmt.Sprintf("unsupported Content-Type %q, expected %q", e.Actual, e.Expected)
+}
+
+// mediaTypeMatches reports whether a request's media type satisfies a declared one, which may be a
+// wildcard ("*/*" or "type/*").
+func mediaTypeMatches(declared, actual string) bool {
+	if declared == "*/*" {
+		return true
+	}
+	if prefix, ok := strings.CutSuffix(declared, "/*"); ok {
+		return strings.HasPrefix(actual, prefix+"/")
+	}
+	return declared == actual
+}
+
+func readBinaryBody(w http.ResponseWriter, r *http.Request, declaredMediaType string, required bool) (*BinaryBody, error) {
+	if r.ContentLength == 0 {
+		if required {
+			return nil, &models.ValidationError{Field: "body", Message: "is required"}
+		}
+		return nil, nil
+	}
+	declared, _, err := mime.ParseMediaType(declaredMediaType)
+	if err != nil {
+		declared = strings.ToLower(declaredMediaType)
+	}
+	rawContentType := r.Header.Get("Content-Type")
+	// RFC 9110 section 8.3: a body without a Content-Type may be treated as application/octet-stream.
+	actual := "application/octet-stream"
+	if rawContentType != "" {
+		actual, _, err = mime.ParseMediaType(rawContentType)
+		if err != nil {
+			return nil, &UnsupportedMediaTypeError{Expected: declaredMediaType, Actual: rawContentType}
+		}
+	}
+	if !mediaTypeMatches(declared, actual) {
+		return nil, &UnsupportedMediaTypeError{Expected: declaredMediaType, Actual: rawContentType}
+	}
+	return &BinaryBody{ContentType: actual, ContentLength: r.ContentLength, Header: r.Header, w: w, r: r}, nil
+}
+
+// File is a raw (non-JSON, non-text) response body. Set Data for content already in memory, or
+// Content to stream it; Content implementing io.Closer is closed once the response is sent.
+type File struct {
+	// Data is the whole response body, when already in memory. Takes precedence over Content.
+	Data []byte
+	// Content is streamed as the response body when Data is nil. For a 200 response, an
+	// io.ReadSeeker (e.g. *os.File) is served via http.ServeContent: Range requests (206 Partial
+	// Content), Content-Length, and If-Modified-Since/If-Range conditional requests are handled
+	// automatically. Any other io.Reader is copied as-is.
+	Content io.Reader
+	// Name, if set, is sent as Content-Disposition: attachment; filename="Name".
+	Name string
+	// ModTime, if set, is sent as Last-Modified (and used for conditional requests).
+	ModTime time.Time
+	// ContentType overrides the media type the operation declares for this response.
+	ContentType string
+}
+
+func writeFile(w http.ResponseWriter, r *http.Request, statusCode int, declaredMediaType string, f File) {
+	content := f.Content
+	if f.Data != nil {
+		content = bytes.NewReader(f.Data)
+	}
+	if closer, ok := content.(io.Closer); ok {
+		defer closer.Close()
+	}
+	contentType := f.ContentType
+	if contentType == "" {
+		contentType = declaredMediaType
+		if strings.Contains(contentType, "*") {
+			contentType = "application/octet-stream"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	if f.Name != "" {
+		if disposition := mime.FormatMediaType("attachment", map[string]string{"filename": f.Name}); disposition != "" {
+			w.Header().Set("Content-Disposition", disposition)
+		}
+	}
+	if seeker, ok := content.(io.ReadSeeker); ok && statusCode == http.StatusOK {
+		http.ServeContent(w, r, "", f.ModTime, seeker)
+		return
+	}
+	if !f.ModTime.IsZero() {
+		w.Header().Set("Last-Modified", f.ModTime.UTC().Format(http.TimeFormat))
+	}
+	w.WriteHeader(statusCode)
+	if content != nil {
+		io.Copy(w, content)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, statusCode int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -284,6 +429,7 @@ func RequireAPIKey(r *http.Request, location, name string) (string, error) {
 type ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 // DefaultErrorHandler maps *models.ValidationError to 400, *MissingAuthenticationError to 401,
+// *http.MaxBytesError (a BinaryBody read past its Limit) to 413, *UnsupportedMediaTypeError to 415,
 // and anything else to 500.
 func DefaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	var validationErr *models.ValidationError
@@ -294,6 +440,16 @@ func DefaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	var authErr *MissingAuthenticationError
 	if errors.As(err, &authErr) {
 		http.Error(w, authErr.Error(), http.StatusUnauthorized)
+		return
+	}
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		http.Error(w, maxBytesErr.Error(), http.StatusRequestEntityTooLarge)
+		return
+	}
+	var mediaTypeErr *UnsupportedMediaTypeError
+	if errors.As(err, &mediaTypeErr) {
+		http.Error(w, mediaTypeErr.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
 	http.Error(w, "internal server error", http.StatusInternalServerError)

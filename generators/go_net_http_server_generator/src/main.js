@@ -49,6 +49,8 @@ if (generate !== "models") {
         packageName,
         handlerType: group.handlerType,
         registerFunc: group.registerFunc,
+        routesFunc: group.routesFunc,
+        tagLiteral: group.tagLiteral,
         description: group.description,
         operations: group.operations,
         routesImports: group.routesImports,
@@ -57,6 +59,7 @@ if (generate !== "models") {
     );
   }
   renderTemplate("runtime.go.j2", { packageName }, "server/runtime.go");
+  renderTemplate("templates/server_routes_index.go.j2", { groups: [...groups.values()].map((g) => ({ routesFunc: g.routesFunc })) }, "server/routes.go");
   if (publishOpenApiSpec) {
     writeFile("server/openapi.json", openApiSpecJson);
     const openApiSpecPatternLiteral = toGoStringLiteral(`GET ${openApiSpecPath}`);

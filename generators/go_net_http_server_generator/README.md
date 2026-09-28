@@ -12,8 +12,8 @@ routing, `encoding/json`): one struct per OpenAPI schema in a `models` package, 
 tag a handler interface and a `RegisterXRoutes` function in a `server` package.
 
 The generated code never creates its own `*http.ServeMux` - `RegisterXRoutes` takes a
-caller-supplied `*http.ServeMux` (or anything satisfying its `Handle`/`HandleFunc` method set) and
-an implementation of the handler interface. Incoming requests (path/query/header/cookie parameters
+caller-supplied `server.Router` (any type with `*http.ServeMux`'s `HandleFunc` method, so a plain
+`*http.ServeMux` works as-is) and an implementation of the handler interface. Incoming requests (path/query/header/cookie parameters
 and, where constrained, the request body) are parsed and validated before the handler is called,
 using shared helper functions in `server/runtime.go` instead of duplicating checks per operation.
 
@@ -39,10 +39,13 @@ openapi-yagen g -o out -g go_net_http_server_generator openapi.yaml \
 ```
 models/<Name>.go          one file per schema (struct / enum / union / defined type)
 server/<Tag>Handler.go    handler interface for one OpenAPI tag, one method per operation
-server/RegisterXRoutes.go registers that tag's routes onto a *http.ServeMux
-server/runtime.go         parameter parsing/validation helpers, error types, ErrorHandler - rendered once
+server/RegisterXRoutes.go registers that tag's routes onto a server.Router; XRoutes() lists them
+server/routes.go          Routes() - every tag's route list combined
+server/runtime.go         parameter parsing/validation helpers, Router/Route, BinaryBody/File, error types,
+                          ErrorHandler - rendered once
 server/openapi.json       only if publishOpenApiSpec=true - the effective OpenAPI document
-server/openapi_spec.go    only if publishOpenApiSpec=true - RegisterOpenApiSpecRoute, embeds openapi.json
+server/openapi_spec.go    only if publishOpenApiSpec=true - OpenAPISpec() and RegisterOpenApiSpecRoute,
+                          embeds openapi.json
 models/validation.go      ValidationError plus requireMin/requireMax/requireMinLength/requireMaxLength/requirePattern
 models/union_helpers.go   internal helpers used by generated oneOf/anyOf wrapper types
 ```
@@ -80,9 +83,41 @@ spec's own `servers`/`basePath` implies one.
 `RegisterXRoutes`'s third argument is an `ErrorHandler` (`func(w http.ResponseWriter, r *http.Request,
 err error)`) called whenever parameter parsing, validation, authentication, or the handler method
 itself returns an error - `nil` uses `server.DefaultErrorHandler`, which maps a
-`*models.ValidationError` to 400, a `*server.MissingAuthenticationError` to 401, and anything else
-to 500. Pass a custom `ErrorHandler` for a different error body shape, logging, or request-ID
-correlation.
+`*models.ValidationError` to 400, a `*server.MissingAuthenticationError` to 401, an
+`*http.MaxBytesError` (a raw request body read past `BinaryBody.Limit`) to 413, a
+`*server.UnsupportedMediaTypeError` (a raw request body with the wrong `Content-Type`) to 415, and
+anything else to 500. Pass a custom `ErrorHandler` for a different error body shape, logging, or
+request-ID correlation.
+
+### Listing routes
+
+Each tag also gets an `XRoutes() []server.Route` function listing the routes `RegisterXRoutes`
+registers, and `server.Routes()` returns every tag's list combined - e.g. for logging the active
+routes at startup:
+
+```go
+for _, route := range server.Routes() {
+    log.Printf("%s %s (%s, tag %s)", route.Method, route.Path, route.OperationID, route.Tag)
+}
+```
+
+`Route.Path` is the path template exactly as the spec declares it (`/pets/{petId}`);
+`Route.OperationID` is empty for an operation without an `operationId`. `RegisterOpenApiSpecRoute`'s
+route is not included.
+
+Since `RegisterXRoutes` accepts any `server.Router`, you can also wrap the mux yourself to record,
+instrument, or rewrite every registration:
+
+```go
+type loggingRouter struct{ mux *http.ServeMux }
+
+func (l loggingRouter) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+    log.Printf("registering %s", pattern)
+    l.mux.HandleFunc(pattern, handler)
+}
+
+server.RegisterPetsRoutes(loggingRouter{mux}, &petsHandler{}, nil)
+```
 
 ### Publishing the OpenAPI spec
 
@@ -103,6 +138,9 @@ mux := http.NewServeMux()
 server.RegisterPetsRoutes(mux, &petsHandler{}, nil)
 server.RegisterOpenApiSpecRoute(mux)
 ```
+
+The same embedded bytes are available as data via `server.OpenAPISpec() []byte` - e.g. to inspect
+the document at startup without an HTTP round-trip. The returned slice is shared; don't modify it.
 
 ### Authentication
 
@@ -144,12 +182,124 @@ share the same `models` output.
 
 ### Request body content types
 
-Same priority order and restrictions as the client generator - see its README "Request body
-content types" section. Server-side, a `application/x-www-form-urlencoded` and a
-`multipart/form-data` body are decoded through the same code path (Go's `net/http` parses either
-one the same way once `ParseMultipartForm` has been called) - except a multipart `format: binary`
-field, read via `r.FormFile` (an actual uploaded file part) rather than `r.PostForm` (a text form
-value), since `application/x-www-form-urlencoded` has no file-part equivalent to parse that way.
+A request body's media type is picked in this order: `application/json` (decoded into the model
+type, `Validate()`d before the handler runs), `multipart/form-data`, then
+`application/x-www-form-urlencoded` (a flat `type: object` schema, one struct field per form
+field), then the single remaining media type - `text/*` as `body string`, anything else as a raw
+body (below). A `application/x-www-form-urlencoded` and a `multipart/form-data` body are decoded
+through the same code path (Go's `net/http` parses either one the same way once
+`ParseMultipartForm` has been called) - except a multipart `format: binary` field, read via
+`r.FormFile` into a `[]byte` field (an actual uploaded file part) rather than `r.PostForm` (a text
+form value), since `application/x-www-form-urlencoded` has no file-part equivalent.
+
+#### Raw request bodies
+
+Any other media type (`application/octet-stream`, `application/zip`, `image/png`, ...) reaches the
+handler as `body *server.BinaryBody` - the request body still **unread**, so each handler
+implementation decides per operation whether to buffer it or stream it:
+
+```go
+// Small payload: just take the bytes.
+func (h *petsHandler) UploadPetAvatar(ctx context.Context, petId string, body *server.BinaryBody) error {
+    data, err := body.Bytes()
+    if err != nil {
+        return err
+    }
+    return h.store.SaveAvatar(petId, data)
+}
+
+// Large payload: stream it straight to disk, capped at 1 GiB.
+func (h *backupHandler) RestoreBackup(ctx context.Context, body *server.BinaryBody) error {
+    body.Limit(1 << 30) // reading past it fails with *http.MaxBytesError -> 413
+    f, err := os.CreateTemp("", "restore-*")
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    _, err = io.Copy(f, body) // BinaryBody is an io.Reader
+    return err
+}
+```
+
+`BinaryBody` also exposes `ContentType` (the request's media type, without parameters),
+`ContentLength` (-1 if unknown) and the request's `Header`.
+
+Before the handler runs, the request's `Content-Type` is checked against the declared media type
+(which may be a wildcard like `application/*` or `*/*`); a mismatch returns a
+`*server.UnsupportedMediaTypeError`, mapped to 415 by `DefaultErrorHandler`. A body sent without
+any `Content-Type` is treated as `application/octet-stream` (RFC 9110). An empty body for a
+`required` requestBody is a `*models.ValidationError` (400); for an optional one, `body` is `nil`.
+
+### Responses
+
+A success response's body type follows its media type: `application/json` returns the model type
+(written with `encoding/json`), a single `text/*` media type returns `string`, any other single
+media type returns a `server.File`, and a response without content returns just `error`. The
+response's status code is the one declared in the spec.
+
+#### Raw response bodies (`server.File`)
+
+```go
+type File struct {
+    Data        []byte    // the whole body, when already in memory - takes precedence over Content
+    Content     io.Reader // streamed as the body when Data is nil; closed afterwards if it's an io.Closer
+    Name        string    // if set: Content-Disposition: attachment; filename="Name"
+    ModTime     time.Time // if set: Last-Modified, and used for conditional requests
+    ContentType string    // overrides the declared media type
+}
+```
+
+```go
+// In memory:
+return server.File{Data: pngBytes}, nil
+
+// Streamed from disk, with Range support:
+f, err := os.Open(path)
+if err != nil {
+    return server.File{}, err
+}
+st, _ := f.Stat()
+return server.File{Content: f, Name: "backup.tar.gz", ModTime: st.ModTime()}, nil
+```
+
+For a 200 response, `Data` or an `io.ReadSeeker` `Content` (such as `*os.File`) is served through
+`http.ServeContent`: `Content-Length`, `Range` requests (`206 Partial Content`), and
+`If-Modified-Since`/`If-Range`/`If-None-Match` conditional requests are handled automatically. A
+`206` response declared with the same media type as the operation's `200` is therefore not a
+separate response the handler returns - `http.ServeContent` produces it. A non-seekable `Content`,
+or any other status code, is copied to the response as-is. A declared wildcard media type (e.g.
+`application/*`) is sent as `application/octet-stream` unless `ContentType` is set.
+
+#### Multiple success responses
+
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) returns a sealed interface, with one struct per status code - the
+handler picks the status by which one it returns:
+
+```go
+// Generated:
+type CreateBackupResponse interface{ isCreateBackupResponse() }
+type CreateBackup200Response struct{ Body File }            // 200, application/zip
+type CreateBackup202Response struct{ Body models.Operation } // 202, application/json
+type CreateBackup204Response struct{}                        // a response without content
+
+// Implementation:
+func (h *backupHandler) CreateBackup(ctx context.Context, sync *bool) (server.CreateBackupResponse, error) {
+    if sync != nil && *sync {
+        f, err := h.buildNow(ctx)
+        if err != nil {
+            return nil, err
+        }
+        return server.CreateBackup200Response{Body: server.File{Content: f, Name: "backup.tar"}}, nil
+    }
+    return server.CreateBackup202Response{Body: h.startInBackground()}, nil
+}
+```
+
+Each variant's `Body` follows the same media type rules as a single response. Return the variant
+by value (not a pointer); `nil` or any other value is reported to the `ErrorHandler` (500 with
+`DefaultErrorHandler`). An operation with a single success response keeps the plain `(T, error)`
+signature.
 
 ### Path/query/header/cookie parameters
 
@@ -172,13 +322,18 @@ openapi-yagen g -o out -g go_net_http_server_generator openapi.yaml \
 ## Known limitations (v1)
 
 - Request and response bodies support `application/json`, a single `text/*` media type (as
-  `string`), and a single other media type (as `[]byte`); request bodies additionally support
-  `application/x-www-form-urlencoded` and `multipart/form-data` (a `type: object` schema with
-  scalar/enum properties or arrays of either; `multipart/form-data` also supports a `format: binary`
-  file-upload property, read via `r.FormFile` - see "Request body content types"). A requestBody/
-  response declaring two or more media types outside those fixed ones is a generator error. A nested
-  object field (or an array of arrays/objects) in a urlencoded/multipart body is still a generator
-  error.
+  `string`), and a single other media type (as `*server.BinaryBody` / `server.File`); request
+  bodies additionally support `application/x-www-form-urlencoded` and `multipart/form-data` (a
+  `type: object` schema with scalar/enum properties or arrays of either; `multipart/form-data` also
+  supports a `format: binary` file-upload property, read via `r.FormFile` - see "Request body
+  content types"). A requestBody/response declaring two or more media types outside those fixed
+  ones is a generator error. A nested object field (or an array of arrays/objects) in a
+  urlencoded/multipart body is still a generator error.
+- A multipart `format: binary` file part is read fully into memory as `[]byte` - only a raw
+  (non-form) request body is streamed.
+- Only explicitly numbered `2xx` responses become separate response variants; a range (`2XX`) or
+  `default` response is used only when no numbered `2xx` response exists. Response headers declared
+  in the spec are not generated - set them in middleware wrapping the mux.
 - `Validate()` (called automatically on a JSON request body before the handler runs; recurses into
   nested struct/`oneOf`/`anyOf`-typed fields - see the client generator README's "Model types"
   section) has non-recursive checks limited to `minimum`/`maximum`/`minLength`/`maxLength`/

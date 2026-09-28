@@ -1,7 +1,8 @@
 package server
 
 import (
-	"net/http"
+{% if routesImports.fmt %}	"fmt"
+{% endif %}	"net/http"
 {% if routesImports.io %}	"io"
 {% endif %}{% if routesImports.strconv %}	"strconv"
 {% endif %}
@@ -18,9 +19,18 @@ import (
 {% if length(schemes) > 0 %}{{ authTry(schemes, 0) | indent("\t", true) }}
 {% else %}	authMatched = true
 {% endif %}}
-{% endmacro %}
+{% endmacro %}{% macro writeResponse(kind, statusCode, mediaTypeLiteral, value) %}{% if kind == "json" %}writeJSON(w, {{ statusCode }}, {{ value }}){% else if kind == "text" %}w.Header().Set("Content-Type", {{ mediaTypeLiteral }})
+w.WriteHeader({{ statusCode }})
+w.Write([]byte({{ value }})){% else if kind == "file" %}writeFile(w, r, {{ statusCode }}, {{ mediaTypeLiteral }}, {{ value }}){% else %}w.WriteHeader({{ statusCode }}){% endif %}{% endmacro %}
+// {{ routesFunc }} lists the routes {{ registerFunc }} registers, in registration order.
+func {{ routesFunc }}() []Route {
+	return []Route{
+{% for op in operations %}		{Method: {{ op.methodLiteral }}, Path: {{ op.pathLiteral }}, OperationID: {{ op.operationIdLiteral }}, Tag: {{ tagLiteral }}},
+{% endfor %}	}
+}
+
 {% if description %}{{ buildDocComment(description, null, [], "//") }}
-{% endif %}func {{ registerFunc }}(mux *http.ServeMux, handler {{ handlerType }}, onError ErrorHandler) {
+{% endif %}func {{ registerFunc }}(mux Router, handler {{ handlerType }}, onError ErrorHandler) {
 	if onError == nil {
 		onError = DefaultErrorHandler
 	}
@@ -111,7 +121,7 @@ if err != nil {
 	return
 }
 body := string(bodyBytes)
-{% else %}body, err := io.ReadAll(r.Body)
+{% else %}body, err := readBinaryBody(w, r, {{ op.body.mediaTypeLiteral }}, {% if op.body.required %}true{% else %}false{% endif %})
 if err != nil {
 	onError(w, r, err)
 	return
@@ -124,14 +134,13 @@ if err != nil {
 	return
 }
 
-{% if op.returnsValue %}{% if op.response.type == "string" %}w.Header().Set("Content-Type", {{ op.response.mediaTypeLiteral }})
-w.WriteHeader({{ op.response.statusCode }})
-w.Write([]byte(result))
-{% else if op.response.type == "[]byte" %}w.Header().Set("Content-Type", {{ op.response.mediaTypeLiteral }})
-w.WriteHeader({{ op.response.statusCode }})
-w.Write(result)
-{% else %}writeJSON(w, {{ op.response.statusCode }}, result){% endif %}
-{% else %}w.WriteHeader({{ op.response.statusCode }})
+{% if op.response.variants %}switch {% if op.response.anyVariantHasBody %}v := {% endif %}result.(type) {
+{% for v in op.response.variants %}case {{ v.typeName }}:
+{{ writeResponse(v.kind, v.statusCode, v.mediaTypeLiteral, "v.Body") | indent("\t", true) }}
+{% endfor %}default:
+	onError(w, r, fmt.Errorf("<7a90f544> {{ op.name }} returned an unexpected {{ op.response.type }} variant %T", result))
+}
+{% else %}{{ writeResponse(op.response.kind, op.response.statusCode, op.response.mediaTypeLiteral, "result") }}
 {% endif %}{% endfilter %}
 	})
 {% endfor %}}

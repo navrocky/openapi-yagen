@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go_net_http_server_generator_test/generated/models"
 	"go_net_http_server_generator_test/generated/server"
@@ -45,8 +46,12 @@ func (fakePetsHandler) DeletePet(ctx context.Context, petId string, bearerAuthTo
 	return nil
 }
 
-func (fakePetsHandler) UploadPetAvatar(ctx context.Context, petId string, apiKeyAuthKey string, body []byte) ([]byte, error) {
-	return body, nil
+func (fakePetsHandler) UploadPetAvatar(ctx context.Context, petId string, apiKeyAuthKey string, body *server.BinaryBody) (server.File, error) {
+	data, err := body.Bytes()
+	if err != nil {
+		return server.File{}, err
+	}
+	return server.File{Data: data}, nil
 }
 
 func (fakePetsHandler) SetPetNotes(ctx context.Context, petId string, body string) (string, error) {
@@ -92,11 +97,101 @@ func (fakeWidgetsHandler) ArchiveWidget(ctx context.Context, widgetId string, ap
 	return nil
 }
 
+// Only ever reads/writes raw bodies - its generated handler file must not import models.
+type fakeFilesHandler struct {
+	files     map[string][]byte
+	modTime   time.Time
+	closed    *bool
+	putLimit  int64
+	lastCType *string
+}
+
+func (h fakeFilesHandler) PutFile(ctx context.Context, fileId string, body *server.BinaryBody) error {
+	body.Limit(h.putLimit)
+	var buf bytes.Buffer
+	// Streamed, not buffered via Bytes() - exercises BinaryBody as a plain io.Reader.
+	if _, err := io.Copy(&buf, body); err != nil {
+		return err
+	}
+	h.files[fileId] = buf.Bytes()
+	return nil
+}
+
+type closeTracker struct {
+	*bytes.Reader
+	closed *bool
+}
+
+func (c closeTracker) Close() error {
+	*c.closed = true
+	return nil
+}
+
+func (h fakeFilesHandler) GetFile(ctx context.Context, fileId string) (server.File, error) {
+	data, ok := h.files[fileId]
+	if !ok {
+		return server.File{}, &models.ValidationError{Field: "fileId", Message: "not found"}
+	}
+	return server.File{Content: closeTracker{bytes.NewReader(data), h.closed}, Name: fileId + ".bin", ModTime: h.modTime}, nil
+}
+
+func (h fakeFilesHandler) EchoFile(ctx context.Context, fileId string, body *server.BinaryBody) (server.File, error) {
+	if body == nil {
+		return server.File{Data: []byte("empty")}, nil
+	}
+	*h.lastCType = body.ContentType
+	data, err := body.Bytes()
+	if err != nil {
+		return server.File{}, err
+	}
+	return server.File{Data: data}, nil
+}
+
+type fakeJobsHandler struct{}
+
+func (fakeJobsHandler) CreateArchive(ctx context.Context, sync *bool) (server.CreateArchiveResponse, error) {
+	if sync != nil && *sync {
+		// A non-seekable reader: streamed with io.Copy rather than http.ServeContent.
+		return server.CreateArchive200Response{Body: server.File{Content: io.MultiReader(strings.NewReader("PK"), strings.NewReader("zip")), Name: "archive.zip"}}, nil
+	}
+	return server.CreateArchive202Response{Body: models.Job{Id: "job-1"}}, nil
+}
+
+func (fakeJobsHandler) Rebuild(ctx context.Context) (server.RebuildResponse, error) {
+	return server.Rebuild204Response{}, nil
+}
+
+func (fakeJobsHandler) Ping(ctx context.Context) (server.PingResponse, error) {
+	// nil is not a valid variant - must be reported through onError, not panic.
+	return nil, nil
+}
+
+// recordingRouter wraps a *http.ServeMux to capture every pattern registered through the Router
+// interface RegisterXRoutes accepts.
+type recordingRouter struct {
+	mux      *http.ServeMux
+	patterns []string
+}
+
+func (r *recordingRouter) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	r.patterns = append(r.patterns, pattern)
+	r.mux.HandleFunc(pattern, handler)
+}
+
+var (
+	testFilesClosed  = false
+	testLastCType    = ""
+	testFilesModTime = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+)
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	server.RegisterPetsRoutes(mux, fakePetsHandler{}, nil)
 	server.RegisterWidgetsRoutes(mux, fakeWidgetsHandler{}, nil)
+	files := fakeFilesHandler{files: map[string][]byte{"hello": []byte("hello, world")}, modTime: testFilesModTime, closed: &testFilesClosed, putLimit: 16, lastCType: &testLastCType}
+	server.RegisterFilesRoutes(mux, files, nil)
+	server.RegisterJobsRoutes(mux, fakeJobsHandler{}, nil)
 	server.RegisterOpenApiSpecRoute(mux)
 	s := httptest.NewServer(mux)
 	t.Cleanup(s.Close)
@@ -622,5 +717,202 @@ func TestPublishOpenApiSpecOffByDefault(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "server", "openapi_spec.go")); !os.IsNotExist(err) {
 		t.Fatalf("expected server/openapi_spec.go to be absent, stat error: %v", err)
+	}
+}
+
+func doRequest(t *testing.T, method, url, contentType string, body io.Reader, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, data
+}
+
+func TestPutFileStreamsBody(t *testing.T) {
+	s := newTestServer(t)
+	resp, _ := doRequest(t, http.MethodPut, s.URL+"/files/a", "application/octet-stream", strings.NewReader("0123456789"), nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp, data := doRequest(t, http.MethodGet, s.URL+"/files/a", "", nil, nil)
+	if resp.StatusCode != http.StatusOK || string(data) != "0123456789" {
+		t.Fatalf("expected the stored body back, got %d %q", resp.StatusCode, data)
+	}
+}
+
+func TestPutFileWithoutContentTypeIsOctetStream(t *testing.T) {
+	s := newTestServer(t)
+	resp, _ := doRequest(t, http.MethodPut, s.URL+"/files/b", "", strings.NewReader("x"), nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for a body without Content-Type, got %d", resp.StatusCode)
+	}
+}
+
+func TestPutFileWrongContentType(t *testing.T) {
+	s := newTestServer(t)
+	resp, _ := doRequest(t, http.MethodPut, s.URL+"/files/a", "application/json", strings.NewReader("{}"), nil)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415, got %d", resp.StatusCode)
+	}
+}
+
+func TestPutFileTooLarge(t *testing.T) {
+	s := newTestServer(t)
+	resp, _ := doRequest(t, http.MethodPut, s.URL+"/files/a", "application/octet-stream", strings.NewReader(strings.Repeat("x", 100)), nil)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 past the handler's Limit, got %d", resp.StatusCode)
+	}
+}
+
+func TestPutFileMissingRequiredBody(t *testing.T) {
+	s := newTestServer(t)
+	resp, _ := doRequest(t, http.MethodPut, s.URL+"/files/a", "application/octet-stream", nil, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a missing required body, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetFileServeContent(t *testing.T) {
+	s := newTestServer(t)
+	testFilesClosed = false
+	resp, data := doRequest(t, http.MethodGet, s.URL+"/files/hello", "", nil, nil)
+	if resp.StatusCode != http.StatusOK || string(data) != "hello, world" {
+		t.Fatalf("unexpected response: %d %q", resp.StatusCode, data)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("unexpected Content-Type %q", ct)
+	}
+	if cl := resp.Header.Get("Content-Length"); cl != "12" {
+		t.Fatalf("unexpected Content-Length %q", cl)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != `attachment; filename=hello.bin` {
+		t.Fatalf("unexpected Content-Disposition %q", cd)
+	}
+	if lm := resp.Header.Get("Last-Modified"); lm != testFilesModTime.Format(http.TimeFormat) {
+		t.Fatalf("unexpected Last-Modified %q", lm)
+	}
+	if !testFilesClosed {
+		t.Fatal("expected File.Content to be closed after the response was sent")
+	}
+
+	resp, data = doRequest(t, http.MethodGet, s.URL+"/files/hello", "", nil, map[string]string{"Range": "bytes=7-11"})
+	if resp.StatusCode != http.StatusPartialContent || string(data) != "world" {
+		t.Fatalf("expected 206 \"world\", got %d %q", resp.StatusCode, data)
+	}
+
+	resp, _ = doRequest(t, http.MethodGet, s.URL+"/files/hello", "", nil, map[string]string{"If-Modified-Since": testFilesModTime.Format(http.TimeFormat)})
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", resp.StatusCode)
+	}
+}
+
+func TestEchoFileWildcardAndOptionalBody(t *testing.T) {
+	s := newTestServer(t)
+	resp, data := doRequest(t, http.MethodPost, s.URL+"/files/x/echo", "application/pdf; charset=binary", strings.NewReader("%PDF"), nil)
+	if resp.StatusCode != http.StatusOK || string(data) != "%PDF" {
+		t.Fatalf("unexpected response: %d %q", resp.StatusCode, data)
+	}
+	if testLastCType != "application/pdf" {
+		t.Fatalf("expected BinaryBody.ContentType without parameters, got %q", testLastCType)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("unexpected Content-Type %q", ct)
+	}
+
+	resp, _ = doRequest(t, http.MethodPost, s.URL+"/files/x/echo", "text/plain", strings.NewReader("hi"), nil)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415 for text/plain against application/*, got %d", resp.StatusCode)
+	}
+
+	resp, data = doRequest(t, http.MethodPost, s.URL+"/files/x/echo", "", nil, nil)
+	if resp.StatusCode != http.StatusOK || string(data) != "empty" {
+		t.Fatalf("expected an absent optional body to reach the handler as nil, got %d %q", resp.StatusCode, data)
+	}
+}
+
+func TestCreateArchiveMultipleSuccessResponses(t *testing.T) {
+	s := newTestServer(t)
+	resp, data := doRequest(t, http.MethodPost, s.URL+"/jobs/archive?sync=true", "", nil, nil)
+	if resp.StatusCode != http.StatusOK || string(data) != "PKzip" {
+		t.Fatalf("expected 200 with the archive, got %d %q", resp.StatusCode, data)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("unexpected Content-Type %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != `attachment; filename=archive.zip` {
+		t.Fatalf("unexpected Content-Disposition %q", cd)
+	}
+
+	resp, data = doRequest(t, http.MethodPost, s.URL+"/jobs/archive", "", nil, nil)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+	var job models.Job
+	if err := json.Unmarshal(data, &job); err != nil || job.Id != "job-1" {
+		t.Fatalf("unexpected 202 body %q (%v)", data, err)
+	}
+
+	resp, _ = doRequest(t, http.MethodPost, s.URL+"/jobs/rebuild", "", nil, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	resp, _ = doRequest(t, http.MethodPost, s.URL+"/jobs/ping", "", nil, nil)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected a nil response variant to map to 500, got %d", resp.StatusCode)
+	}
+}
+
+func TestRoutesTable(t *testing.T) {
+	want := server.Route{Method: "GET", Path: "/files/{fileId}", OperationID: "getFile", Tag: "files"}
+	found := false
+	for _, r := range server.FilesRoutes() {
+		if r == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %+v in FilesRoutes(), got %+v", want, server.FilesRoutes())
+	}
+	all := server.Routes()
+	if len(all) != len(server.PetsRoutes())+len(server.WidgetsRoutes())+len(server.FilesRoutes())+len(server.JobsRoutes()) {
+		t.Fatalf("expected Routes() to be the union of every tag's routes, got %d", len(all))
+	}
+
+	router := &recordingRouter{mux: http.NewServeMux()}
+	server.RegisterFilesRoutes(router, fakeFilesHandler{}, nil)
+	if len(router.patterns) != len(server.FilesRoutes()) {
+		t.Fatalf("expected one registration per route, got %v", router.patterns)
+	}
+	for i, r := range server.FilesRoutes() {
+		if router.patterns[i] != r.Method+" "+r.Path {
+			t.Fatalf("route %d: registered %q, listed %+v", i, router.patterns[i], r)
+		}
+	}
+}
+
+func TestOpenAPISpecAccessor(t *testing.T) {
+	var doc map[string]any
+	if err := json.Unmarshal(server.OpenAPISpec(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["paths"].(map[string]any)["/files/{fileId}"]; !ok {
+		t.Fatal("expected OpenAPISpec() to return the embedded document")
 	}
 }

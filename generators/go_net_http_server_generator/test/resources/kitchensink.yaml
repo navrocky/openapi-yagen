@@ -15,6 +15,10 @@ tags:
       tags[].description reaching the generated tag client's own doc comment.
   - name: widgets
     description: Operations for the oneOf/anyOf coverage vehicle (see WidgetVariant below).
+  - name: files
+    description: Raw binary uploads/downloads - every operation here only uses raw bodies, no models.
+  - name: jobs
+    description: Operations with more than one success response, picked by the handler at runtime.
 paths:
   /pets:
     get:
@@ -332,8 +336,126 @@ paths:
       responses:
         "204":
           description: Archived
+  /files/{fileId}:
+    parameters:
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: putFile
+      tags: [files]
+      summary: Store a file, streamed from the request body.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Stored
+    get:
+      operationId: getFile
+      tags: [files]
+      summary: Download a file, with Range support.
+      responses:
+        "200":
+          description: The whole file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: A byte range of the file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /files/{fileId}/echo:
+    parameters:
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: echoFile
+      tags: [files]
+      summary: Echo an optional body of any application/* media type back.
+      requestBody:
+        content:
+          application/*:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The echoed body
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+  /jobs/archive:
+    post:
+      operationId: createArchive
+      tags: [jobs]
+      summary: Build an archive - synchronously (200, the archive itself) or in the background (202).
+      parameters:
+        - name: sync
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The finished archive
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "202":
+          description: Archive job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /jobs/rebuild:
+    post:
+      operationId: rebuild
+      tags: [jobs]
+      responses:
+        "202":
+          description: Rebuild job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "204":
+          description: Nothing to rebuild
+  /jobs/ping:
+    post:
+      operationId: ping
+      tags: [jobs]
+      description: Two success responses, neither with a body.
+      responses:
+        "200":
+          description: Pong
+        "204":
+          description: Nothing to say
 components:
   schemas:
+    Job:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
     Pet:
       description: A pet available in the store.
       type: object

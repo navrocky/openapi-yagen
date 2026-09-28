@@ -280,7 +280,8 @@ function tagDescription(tagName) {
   return (tag && tag.description) || null;
 }
 
-const BUILTIN_TYPES = new Set(["string", "int", "int32", "int64", "float32", "float64", "bool", "time.Time", "[]byte", "any"]);
+// "byte" (not just "[]byte") because baseGoType strips a "[]" prefix before this lookup.
+const BUILTIN_TYPES = new Set(["string", "int", "int32", "int64", "float32", "float64", "bool", "time.Time", "[]byte", "byte", "any"]);
 
 function baseGoType(t) {
   while (true) {

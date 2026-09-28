@@ -1,0 +1,9 @@
+package server
+
+// Routes lists every operation route generated into this package, across all tags - the union of
+// each tag's own XRoutes() list. It doesn't include RegisterOpenApiSpecRoute's route.
+func Routes() []Route {
+	var routes []Route
+{% for g in groups %}	routes = append(routes, {{ g.routesFunc }}()...)
+{% endfor %}	return routes
+}
