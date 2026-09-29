@@ -145,10 +145,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The pattern is required: the docker job's build-push-action uploads a build record artifact
+      # (`<repo>~<repo>~<id>.dockerbuild`) to this run, which is not a valid zip and fails the
+      # download if it's picked up.
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: openapi-yagen-*
           merge-multiple: true
 
       - name: Release
