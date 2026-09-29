@@ -58,7 +58,7 @@ export function buildFromHExpr(descriptor, expr, depth = 0) {
 // exclusiveMaximum/multipleOf/minItems/maxItems/uniqueItems), recursing through "array"/"record"
 // descriptor positions the same way buildFromHExpr/buildToWireExpr do. Used to generate each
 // model's validate! (see templates/model_class.rb.j2) - part of this generator's answer to
-// AGENTS.md's "a generator for a dynamically-typed target language must generate its own runtime
+// docs/develop/generator-conventions.md's "a generator for a dynamically-typed target language must generate its own runtime
 // checks" convention (Ruby has no compiler to reject a wrong-shaped/out-of-spec value the way the
 // TypeScript/Kotlin generators' static types do).
 //

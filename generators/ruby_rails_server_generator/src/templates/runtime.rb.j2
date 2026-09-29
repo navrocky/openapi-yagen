@@ -27,7 +27,66 @@ module {{ moduleName }}::Runtime
   # status (401) rather than ValidationError's 422.
   class MissingAuthenticationError < StandardError; end
 
+  # Raised when a raw request body's Content-Type doesn't match the media type the operation
+  # declares - mapped to a 415 JSON response by every generated controller/concern.
+  class UnsupportedMediaTypeError < StandardError; end
+
+  # What a handler returns for an operation declaring two or more success responses: the status to
+  # respond with (one of the declared ones) and the body for it (nil for a response without
+  # content).
+  Response = Struct.new(:status, :body, keyword_init: true)
+
+  # A raw (non-JSON, non-text) response body with metadata - return a plain binary String instead
+  # when there's none to add. Set either `data` (the bytes) or `path` (a file sent via send_file,
+  # without reading it into memory); `name` becomes Content-Disposition: attachment; filename="...",
+  # `content_type` overrides the declared media type.
+  BinaryContent = Struct.new(:data, :path, :name, :content_type, keyword_init: true)
+
   module_function
+
+  # A raw request body as the still-unread request IO (rewound), after checking its Content-Type
+  # against the operation's declared media type (a wildcard like "application/*" matches its whole
+  # family). A body sent without a Content-Type is treated as application/octet-stream (RFC 9110
+  # section 8.3). An empty body is nil for an optional requestBody, a ValidationError for a
+  # required one.
+  def binary_body(request, declared_media_type, required:)
+    if request.content_length.to_i.zero? && request.headers["Transfer-Encoding"].nil?
+      raise ValidationError, "request body is required" if required
+
+      return nil
+    end
+    actual = (request.content_type || "application/octet-stream").split(";").first.strip.downcase
+    declared = declared_media_type.split(";").first.strip.downcase
+    matches = declared == "*/*" || (declared.end_with?("/*") ? actual.start_with?(declared.delete_suffix("*")) : declared == actual)
+    raise UnsupportedMediaTypeError, "unsupported Content-Type #{request.content_type.inspect}, expected #{declared_media_type.inspect}" unless matches
+
+    body = request.body
+    body.rewind if body.respond_to?(:rewind)
+    body
+  end
+
+  # Renders a raw response body - a binary String or a BinaryContent. A declared wildcard media type
+  # (e.g. "application/*") is sent as application/octet-stream unless BinaryContent#content_type
+  # overrides it.
+  def render_binary(controller, value, status:, media_type:)
+    content = value.is_a?(BinaryContent) ? value : BinaryContent.new(data: value)
+    type = content.content_type || (media_type.include?("*") ? "application/octet-stream" : media_type)
+    disposition = content.name ? "attachment" : "inline"
+    if content.path
+      controller.send(:send_file, content.path, type: type, status: status, filename: content.name, disposition: disposition)
+    else
+      raise TypeError, "expected a String or #{BinaryContent} response body, got #{content.data.class}" unless content.data.is_a?(String)
+
+      if content.name
+        controller.send(:send_data, content.data, type: type, status: status, filename: content.name, disposition: disposition)
+      else
+        controller.send(:render, body: content.data, status: status)
+        # Set directly rather than via render's content_type:, which would append "; charset=utf-8"
+        # to what is binary data.
+        controller.response.headers["Content-Type"] = type
+      end
+    end
+  end
 
   # Constraint-check helpers used by each generated model's validate! and by the generated
   # controller/concern layer for path/query/header/cookie parameters. Each is a no-op when `value`

@@ -143,7 +143,7 @@ requires `YYYY-MM-DD`.
 
 Request-body content types are picked from whichever the spec declares, in priority order
 `application/json` > `multipart/form-data` > `application/x-www-form-urlencoded` > a single
-remaining media type (sent as `string` if `text/*`, `[]byte` otherwise). The first three build the
+remaining media type (sent as `string` if `text/*`, streamed from an `io.Reader` otherwise). The first three build the
 same generated model struct as the `body` parameter - only how it's sent over the wire differs:
 
 - **`application/json`** (default): `Content-Type: application/json`, JSON-encoded body.
@@ -160,8 +160,74 @@ same generated model struct as the `body` parameter - only how it's sent over th
   model to carry a caller-chosen filename).
 - **any single `text/*` media type**: `body string`, sent with the exact declared media type as
   `Content-Type` (not a generic `text/plain`).
-- **any single other remaining media type**: `body []byte`, sent the same way. The declared
-  schema's `format` has no bearing here - the wire content-type alone decides `string` vs. `[]byte`.
+- **any single other remaining media type**: `body io.Reader`, streamed as the request body without
+  buffering, with the declared media type as `Content-Type` (a wildcard like `application/*` is sent
+  as `application/octet-stream`). Pass `bytes.NewReader(data)` for data already in memory, or an
+  `*os.File` to upload a file straight from disk. `nil` omits an optional body. The declared
+  schema's `format` has no bearing here - the wire content-type alone decides `string` vs. raw.
+
+### Responses
+
+A success response's body type follows its media type: `application/json` decodes into the model
+type, a single `text/*` media type returns `string`, any other single media type returns a
+`*client.File`, and a response without content returns just `error`.
+
+#### Raw response bodies (`*client.File`)
+
+A `*client.File` hands you the response body **still unread**, so you choose per call whether to
+buffer or stream it:
+
+```go
+// Small payload: read it whole (Bytes() also closes the body).
+file, err := api.Pets.GetPetAvatar(ctx, "1")
+if err != nil {
+    return err
+}
+data, err := file.Bytes()
+
+// Large payload: stream it to disk - you must Close() it yourself.
+file, err := api.Backups.DownloadBackup(ctx, id)
+if err != nil {
+    return err
+}
+defer file.Close()
+out, _ := os.Create(file.Name) // Name comes from Content-Disposition, "" if absent
+_, err = io.Copy(out, file.Body)
+```
+
+`File` also carries `ContentType`, `ContentLength` (-1 if unknown), `StatusCode` (e.g. 206 for a
+partial response) and the full response `Header`. A `206` response declared with the same media
+type as the operation's `200` is returned the same way, as a `*File`.
+
+#### Multiple success responses
+
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) returns a sealed interface with one struct per status code, picked
+by the actual response status:
+
+```go
+// Generated:
+type CreateBackupResponse interface{ isCreateBackupResponse() }
+type CreateBackup200Response struct{ Body *File }            // 200, application/zip
+type CreateBackup202Response struct{ Body models.Operation } // 202, application/json
+type CreateBackup204Response struct{}                        // a response without content
+
+// Usage:
+resp, err := api.Backups.CreateBackup(ctx, &sync)
+if err != nil {
+    return err
+}
+switch r := resp.(type) {
+case client.CreateBackup200Response:
+    defer r.Body.Close()
+    // stream r.Body.Body ...
+case client.CreateBackup202Response:
+    log.Printf("backup job %s started", r.Body.Id)
+}
+```
+
+A `2xx` status the operation doesn't declare is returned as a `*client.ResponseError`. An operation
+with a single success response keeps the plain `(T, error)` signature.
 
 A requestBody/response declaring two or more media types outside the ones above is a generator
 error.
@@ -194,7 +260,7 @@ openapi-yagen g -o out -g go_net_http_client_generator openapi.yaml \
 ## Known limitations (v1)
 
 - Request and response bodies support `application/json`, a single `text/*` media type (as
-  `string`), and a single other media type (as `[]byte`); request bodies additionally support
+  `string`), and a single other media type (as `io.Reader` / `*client.File`); request bodies additionally support
   `application/x-www-form-urlencoded` and `multipart/form-data` (a `type: object` schema with
   scalar/enum properties or arrays of either; `multipart/form-data` also supports a `format: binary`
   file-upload property - see "Request body content types"). A requestBody/response declaring two or

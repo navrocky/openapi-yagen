@@ -377,8 +377,13 @@ function buildRequestBody(registry, hintBase, requestBody) {
         `type, or a single other media type (read as raw bytes) are supported`
     );
   }
-  if (picked.encoding === "text" || picked.encoding === "bytes") {
+  if (picked.encoding === "text") {
     return { label: "String", descriptor: { kind: "primitive" }, required: requestBody.required === true, encoding: picked.encoding, mediaType: picked.mediaType };
+  }
+  // A raw body reaches the handler as the still-unread request body IO, so the handler decides
+  // whether to #read it whole or stream it (IO.copy_stream).
+  if (picked.encoding === "bytes") {
+    return { label: "IO", descriptor: null, required: requestBody.required === true, encoding: picked.encoding, mediaType: picked.mediaType };
   }
   const bodySchema = picked.content.schema || {};
   if (picked.encoding !== "json") requireFlatObjectSchema(bodySchema, picked.mediaType);
@@ -390,27 +395,93 @@ function buildRequestBody(registry, hintBase, requestBody) {
 // Ported near-verbatim from ruby_faraday_client_generator's own buildResponse, plus the numeric
 // HTTP status code every generated action needs to actually respond with (that generator has no
 // analogous need - a client only ever READS a status, never sends one).
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  const statusCode = picked ? (picked.statusCode === "default" ? 200 : parseInt(picked.statusCode, 10)) : 200;
-  if (!picked) return { label: null, descriptor: null, encoding: "json", mediaType: null, statusCode };
-  const content = picked.response.content || {};
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
   if (Object.keys(content).length === 0) return { label: null, descriptor: null, encoding: "json", mediaType: null, statusCode };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = rubyType(registry, jsonContent.schema || {}, hintBase + "Response");
+    const t = rubyType(registry, jsonContent.schema || {}, typeHint);
     return { label: t.label, descriptor: t.descriptor, encoding: "json", mediaType: null, statusCode };
   }
   const remaining = Object.keys(content);
   if (remaining.length === 1) {
     const mediaType = remaining[0];
-    return { label: "String", descriptor: { kind: "primitive" }, encoding: isTextMediaType(mediaType) ? "text" : "bytes", mediaType, statusCode };
+    const isText = isTextMediaType(mediaType);
+    return {
+      label: isText ? "String" : "String, Runtime::BinaryContent",
+      descriptor: { kind: "primitive" },
+      encoding: isText ? "text" : "bytes",
+      mediaType,
+      statusCode,
+    };
   }
   throw Error(
-    `<e5a8c2f9> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
+    `<e5a8c2f9> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
       `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as raw bytes) are ` +
       `supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, not a
+// separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps returning the plain body. Two or more (e.g. 200 for a synchronous
+// result, 202 for an accepted background job) make the handler return a Runtime::Response (status +
+// body) instead, so it picks the status at runtime.
+function buildResponse(registry, hintBase, responses) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    const statusCode = picked ? (picked.statusCode === "default" || !/^\d+$/.test(picked.statusCode) ? 200 : parseInt(picked.statusCode, 10)) : 200;
+    if (!picked) return { label: null, descriptor: null, encoding: "json", mediaType: null, statusCode, variants: null };
+    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response), variants: null };
+  }
+  const variants = entries.map(({ statusCode, response }) =>
+    buildResponseBody(registry, hintBase + statusCode + "Response", parseInt(statusCode, 10), response)
+  );
+  return { label: "Runtime::Response", descriptor: null, encoding: "variants", mediaType: null, statusCode: null, variants };
+}
+
+// The Ruby statements that render one response from `valueExpr` (the handler's result, or a
+// Runtime::Response's #body).
+function buildRenderStatements(response, valueExpr) {
+  if (!response.descriptor) return [`head ${response.statusCode}`];
+  if (response.encoding === "json") return [`render json: ${buildToWireExpr(response.descriptor, valueExpr)}, status: ${response.statusCode}`];
+  if (response.encoding === "bytes") {
+    return [`Runtime.render_binary(self, ${valueExpr}, status: ${response.statusCode}, media_type: ${toStringLiteral(response.mediaType)})`];
+  }
+  return [
+    `render body: ${buildToWireExpr(response.descriptor, valueExpr)}, status: ${response.statusCode}`,
+    `response.headers["Content-Type"] = ${toStringLiteral(response.mediaType)}`,
+  ];
+}
+
+function buildResponseStatements(response, opName) {
+  if (!response.variants) return buildRenderStatements(response, "result");
+  const statements = [
+    `raise TypeError, "${opName} must return a #{Runtime::Response}, got #{result.class}" unless result.is_a?(Runtime::Response)`,
+    `case result.status`,
+  ];
+  for (const v of response.variants) {
+    statements.push(`when ${v.statusCode}`);
+    statements.push(...buildRenderStatements(v, "result.body").map((line) => "  " + line));
+  }
+  statements.push(`else`);
+  statements.push(`  raise ArgumentError, "${opName} returned undeclared status #{result.status}"`);
+  statements.push(`end`);
+  return statements;
 }
 
 function tagDescription(tagName) {
@@ -418,7 +489,7 @@ function tagDescription(tagName) {
   return (tag && tag.description) || null;
 }
 
-// Builds the YARD comment lines for one operation's handler-interface method - AGENTS.md's
+// Builds the YARD comment lines for one operation's handler-interface method - docs/develop/generator-conventions.md's
 // "thread OpenAPI description into generated doc comments" convention, covering summary AND
 // description (both, not just summary), each documented parameter (as @param lines), and the
 // return type (as @return - RubyMine and other YARD-aware tools use this to type-check a
@@ -428,7 +499,12 @@ function buildDocLines(op, docParams, response) {
   if (op.summary) lines.push(op.summary);
   if (op.description) lines.push(op.description);
   for (const p of docParams) lines.push(p.description ? `@param ${p.name} [${p.label}] ${p.description}` : `@param ${p.name} [${p.label}]`);
-  lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+  if (response.variants) {
+    const statuses = response.variants.map((v) => `${v.statusCode} (${v.descriptor ? v.label : "no body"})`).join(", ");
+    lines.push(`@return [${response.label}] status and body of one of: ${statuses}`);
+  } else {
+    lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+  }
   return lines;
 }
 
@@ -476,8 +552,10 @@ export function collectOperationsByTag(registry) {
 
         let bodyStatements = null;
         if (body) {
-          if (body.encoding === "text" || body.encoding === "bytes") {
+          if (body.encoding === "text") {
             bodyStatements = ["body = request.raw_post"];
+          } else if (body.encoding === "bytes") {
+            bodyStatements = [`body = Runtime.binary_body(request, ${toStringLiteral(body.mediaType)}, required: ${body.required})`];
           } else {
             // multipart/urlencoded fields need per-field string coercion BEFORE from_h (see
             // buildFormFieldCoercions) - json doesn't (coercionStatements is empty there).
@@ -524,7 +602,7 @@ export function collectOperationsByTag(registry) {
           bodyStatements,
           body,
           response,
-          responseWireExpr: response.descriptor ? buildToWireExpr(response.descriptor, "result") : null,
+          responseStatements: buildResponseStatements(response, opName),
         });
       },
       () => {} // permissive mode: drop this operation, keep the rest of the group as-is

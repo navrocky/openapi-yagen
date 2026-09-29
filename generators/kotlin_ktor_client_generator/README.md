@@ -149,10 +149,37 @@ differs:
   `ByteArray` body as-is too. This only applies to a `format: binary` schema used as the ENTIRE
   request body (not as one property of a multipart/urlencoded object) - the wire content-type
   alone decides `String` vs. `ByteArray` here, same as it does at runtime for a real client/server.
+  A wildcard declared media type (e.g. `application/*`) is sent as `application/octet-stream`.
 
   A requestBody declaring two or more media types outside the three fixed ones above is ambiguous
   (which one would the generated method actually send?) and is a generator error, same as any other
   unsupported content-type - see "Known limitations".
+
+### Multiple success responses
+
+A single success response is decoded as the method's plain return type, whatever `2xx` status
+actually arrives. An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous
+result and `202` for an accepted background job) instead returns a sealed interface with one nested
+`StatusNNN` per status code, decoded according to the actual response status:
+
+```kotlin
+// Generated (apis package):
+sealed interface CreateBackupResponse {
+    class Status200(val body: ByteArray) : CreateBackupResponse // 200, application/zip
+    class Status202(val body: Operation) : CreateBackupResponse // 202, application/json
+    object Status204 : CreateBackupResponse                     // a response without content
+}
+
+// Usage:
+when (val response = api.backups.createBackup(sync = true)) {
+    is CreateBackupResponse.Status200 -> saveArchive(response.body)
+    is CreateBackupResponse.Status202 -> println("backup job ${response.body.id} started")
+    CreateBackupResponse.Status204 -> {}
+}
+```
+
+Any other status (an undeclared `2xx`, or a `4xx`/`5xx`) throws Ktor's `ResponseException`, carrying
+the response and its body text.
 
 ## Formatting generated sources
 
@@ -213,6 +240,9 @@ find out -name "*.kt" | xargs java -jar ktfmt-<version>-with-dependencies.jar --
   generator error, same as for a plain (non-union) parameter.
 
 ## Known limitations (v1)
+
+- A raw (non-JSON/form/text) request or response body is sent/received whole as a `ByteArray` -
+  there's no streaming of large uploads/downloads.
 
 - Request and response bodies support `application/json`, a single `text/*` media type (as a
   `String`), and a single other media type (as a raw `ByteArray`); request bodies additionally

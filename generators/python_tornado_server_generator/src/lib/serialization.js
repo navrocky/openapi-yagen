@@ -13,7 +13,7 @@
 //   { kind: "array", item: <descriptor> }
 //   { kind: "record", value: <descriptor> | null }   // null = untyped Dict[str, Any], no per-value walk
 //
-// Per AGENTS.md's "a generator for a dynamically-typed target language must generate its own
+// Per docs/develop/generator-conventions.md's "a generator for a dynamically-typed target language must generate its own
 // runtime checks" convention (Python is explicitly named there as a future case, alongside Ruby -
 // the reference implementation these functions mirror). Validation only ever runs against
 // *incoming* values (request parameters/bodies) - like the sibling generators, a handler's

@@ -5,6 +5,8 @@ package {{ apisPackage }}
 {% endif %}import {{ packageName }}.*
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.ResponseException
+import io.ktor.client.statement.bodyAsText
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.head
@@ -53,8 +55,23 @@ import io.ktor.http.contentType
     setBody(body)
 {% else %}    contentType(ContentType.Application.Json)
     setBody(body)
-{% endif %}{% endif %}}{% if op.returnsValue %}
+{% endif %}{% endif %}}{% if op.response.variants %}
+return when (response.status.value) {
+{% for v in op.response.variants %}    {{ v.statusCode }} -> {% if v.type == "Unit" %}{{ op.response.type }}.{{ v.className }}{% else %}{{ op.response.type }}.{{ v.className }}(response.body()){% endif %}
+{% endfor %}    else -> throw ResponseException(response, response.bodyAsText())
+}{% else if op.returnsValue %}
 return response.body(){% endif %}{% endfilter %}
     }
 {% endfor %}
 }
+{% for op in operations %}{% if op.response.variants %}
+
+/**
+ * One of [{{ tagClass }}.{{ op.name }}]'s success responses, picked by the response status.
+ */
+sealed interface {{ op.response.type }} {
+{% for v in op.response.variants %}{{ buildDocComment(v.description) | indent(4, true) }}
+{% if v.type == "Unit" %}    object {{ v.className }} : {{ op.response.type }}
+{% else %}    class {{ v.className }}(val body: {{ v.type }}) : {{ op.response.type }}
+{% endif %}{% endfor %}}
+{% endif %}{% endfor %}

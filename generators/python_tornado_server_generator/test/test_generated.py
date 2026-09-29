@@ -15,7 +15,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlencode
 
 import pytest
@@ -67,10 +67,23 @@ _generate()
 sys.path.insert(0, str(OUT_DIR))
 
 from kitchensink_api.apis.widgets import WidgetsHandler, build_widgets_routes  # noqa: E402
+from kitchensink_api.apis.files import FilesHandler, build_files_routes  # noqa: E402
+from kitchensink_api.apis.jobs import (  # noqa: E402
+    CreateArchive200Response,
+    CreateArchive202Response,
+    CreateArchiveResponse,
+    JobsHandler,
+    PingResponse,
+    Rebuild204Response,
+    RebuildResponse,
+    build_jobs_routes,
+)
+from kitchensink_api.runtime import BinaryContent  # noqa: E402
 from kitchensink_api.openapi_spec import build_openapi_spec_routes  # noqa: E402
 from kitchensink_api.models import (  # noqa: E402
     Circle,
     EnvelopeUnion,
+    Job,
     ErrorResponse,
     NewWidget,
     NewWidgetVisibility,
@@ -173,12 +186,93 @@ class FakeWidgetsHandler(WidgetsHandler):
         return "OK"
 
 
+class FakeFilesHandler(FilesHandler):
+    def __init__(self) -> None:
+        self.files: Dict[str, bytes] = {"hello": b"hello, world"}
+
+    def get_file(self, *, file_id: str) -> Union[bytes, BinaryContent]:
+        data = self.files.get(file_id)
+        if data is None:
+            raise HTTPError(404)
+        return BinaryContent(data=data, name=f"{file_id}.bin")
+
+    def put_file(self, *, file_id: str, body: bytes) -> None:
+        self.files[file_id] = body
+
+    def echo_file(self, *, file_id: str, body: Optional[bytes] = None) -> Union[bytes, BinaryContent]:
+        return b"empty" if body is None else body
+
+
+class FakeJobsHandler(JobsHandler):
+    def create_archive(self, *, sync: Optional[bool]) -> CreateArchiveResponse:
+        if sync:
+            return CreateArchive200Response(body=BinaryContent(data=b"PKzip", name="archive.zip"))
+        return CreateArchive202Response(body=Job(id="job-1"))
+
+    def rebuild(self) -> RebuildResponse:
+        return Rebuild204Response()
+
+    def ping(self) -> PingResponse:
+        return None  # type: ignore[return-value]  # not a valid variant - must become a 500
+
+
 class GeneratedTornadoAppTest(AsyncHTTPTestCase):
     def get_app(self):
         import tornado.web
 
         self.handler_impl = FakeWidgetsHandler()
-        return tornado.web.Application(build_widgets_routes(self.handler_impl) + build_openapi_spec_routes())
+        self.files_impl = FakeFilesHandler()
+        return tornado.web.Application(
+            build_widgets_routes(self.handler_impl)
+            + build_files_routes(self.files_impl)
+            + build_jobs_routes(FakeJobsHandler())
+            + build_openapi_spec_routes()
+        )
+
+    def test_put_file_stores_the_raw_body(self) -> None:
+        response = self.fetch("/files/a", method="PUT", body=b"0123", headers={"Content-Type": "application/octet-stream"})
+        assert response.code == 204
+        assert self.files_impl.files["a"] == b"0123"
+
+    def test_put_file_without_content_type_is_octet_stream(self) -> None:
+        response = self.fetch("/files/b", method="PUT", body=b"x")
+        assert response.code == 204
+
+    def test_put_file_rejects_a_mismatched_content_type_with_415(self) -> None:
+        response = self.fetch("/files/a", method="PUT", body=b"{}", headers={"Content-Type": "application/json"})
+        assert response.code == 415
+
+    def test_put_file_rejects_a_missing_required_body_with_422(self) -> None:
+        response = self.fetch("/files/a", method="PUT", body=b"")
+        assert response.code == 422
+
+    def test_echo_file_wildcard_media_type_and_optional_body(self) -> None:
+        echoed = self.fetch("/files/x/echo", method="POST", body=b"%PDF", headers={"Content-Type": "application/pdf; charset=binary"})
+        assert echoed.code == 200
+        assert echoed.body == b"%PDF"
+        assert echoed.headers["Content-Type"] == "application/zip"
+        wrong = self.fetch("/files/x/echo", method="POST", body=b"hi", headers={"Content-Type": "text/plain"})
+        assert wrong.code == 415
+        empty = self.fetch("/files/x/echo", method="POST", body=b"")
+        assert empty.body == b"empty"
+
+    def test_get_file_sends_content_disposition(self) -> None:
+        response = self.fetch("/files/hello")
+        assert response.code == 200
+        assert response.body == b"hello, world"
+        assert response.headers["Content-Disposition"] == 'attachment; filename="hello.bin"'
+
+    def test_create_archive_picks_the_status_by_the_returned_variant(self) -> None:
+        sync = self.fetch("/jobs/archive?sync=true", method="POST", body=b"")
+        assert sync.code == 200
+        assert sync.body == b"PKzip"
+        assert sync.headers["Content-Type"] == "application/zip"
+        assert sync.headers["Content-Disposition"] == 'attachment; filename="archive.zip"'
+        accepted = self.fetch("/jobs/archive", method="POST", body=b"")
+        assert accepted.code == 202
+        assert json.loads(accepted.body) == {"id": "job-1"}
+        assert self.fetch("/jobs/rebuild", method="POST", body=b"").code == 204
+        assert self.fetch("/jobs/ping", method="POST", body=b"").code == 500
 
     def test_list_widgets_returns_json_array(self) -> None:
         response = self.fetch("/widgets")

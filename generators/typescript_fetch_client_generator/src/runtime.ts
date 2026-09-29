@@ -75,6 +75,13 @@ export type BodyEncoding = "json" | "urlencoded" | "multipart" | "text" | "bytes
  * virtually always JSON/text even for an otherwise binary-bodied operation. */
 export type ResponseEncoding = "json" | "text" | "bytes";
 
+/** How one of several declared success responses is parsed - see `RequestOptions.responses`.
+ * "none" - a response without content (only its status is returned). */
+export interface ResponseVariantSpec {
+  encoding: ResponseEncoding | "none";
+  validate?: (value: unknown) => boolean;
+}
+
 export interface RequestOptions {
   method: string;
   /** Already interpolated by the caller (see each operation's generated path template); must
@@ -112,6 +119,11 @@ export interface RequestOptions {
    * below). Absent (not just a no-op function) when validation is off, so that mode has zero
    * runtime cost beyond the property being `undefined`. */
   validate?: (value: unknown) => boolean;
+  /** Only present for an operation declaring two or more 2xx responses: how to parse each one,
+   * by status code. `request()` then resolves to `{ status, body }` (or just `{ status }` for an
+   * "none" variant) instead of the bare body, and treats any other status - including an
+   * undeclared 2xx - as an `ApiError`. Supersedes `responseEncoding`/`validate`. */
+  responses?: Record<number, ResponseVariantSpec>;
   /** Only present when the spec declares a non-empty `security` for this operation: every
    * OR-alternative the operation accepts (see AuthAlternative/ApiClientConfig.auth). request()
    * uses whichever alternative's every scheme has a configured provider, trying them in the
@@ -119,7 +131,8 @@ export interface RequestOptions {
   auth?: AuthAlternative[];
 }
 
-/** Thrown by `request()` whenever the response status is not in the 2xx range. */
+/** Thrown by `request()` whenever the response status is not in the 2xx range - or, for an
+ * operation declaring several success responses, isn't one of them. */
 export class ApiError extends Error {
   readonly status: number;
   readonly statusText: string;
@@ -315,6 +328,19 @@ export async function request<T>(config: ApiClientConfig, options: RequestOption
   }
 
   const response = await doFetch(url, { method: options.method, headers, body, signal: options.signal });
+  if (options.responses) {
+    const variant = response.ok ? options.responses[response.status] : undefined;
+    const parsed = await parseBody(response, variant && variant.encoding !== "none" ? variant.encoding : "json");
+    if (!variant) throw new ApiError(response.status, response.statusText, parsed);
+    if (variant.encoding === "none") return { status: response.status } as T;
+    if (variant.validate && !variant.validate(parsed)) {
+      throw new ResponseValidationError(
+        `Response body for ${options.method} ${options.path} (status ${response.status}) does not match the expected type`,
+        parsed
+      );
+    }
+    return { status: response.status, body: parsed } as T;
+  }
   const parsed = await parseBody(response, options.responseEncoding ?? "json");
   if (!response.ok) throw new ApiError(response.status, response.statusText, parsed);
   if (options.validate && !options.validate(parsed)) {

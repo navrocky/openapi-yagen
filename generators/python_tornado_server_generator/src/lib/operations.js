@@ -286,7 +286,10 @@ function buildRequestBody(registry, hintBase, requestBody) {
     setupLines.push(`body = self.request.body.decode("utf-8")`);
   } else {
     type = "bytes";
-    setupLines.push(`body = self.request.body`);
+    // Content-Type is checked against the declared media type (415 on mismatch) before the handler
+    // ever sees the body; an absent body is None (optional) or a ValidationError (required).
+    const readExpr = `runtime.read_binary_body(self.request.headers.get("Content-Type"), self.request.body, ${escapePythonString(picked.mediaType)}, required=${required ? "True" : "False"})`;
+    setupLines.push(`body = ${required ? `cast(bytes, ${readExpr})` : readExpr}`);
   }
   // A "form" body is always constructed (never None) regardless of the schema's own `required` -
   // there's no single "body is present" signal for form data the way JSON's raw bytes give one, so
@@ -297,27 +300,67 @@ function buildRequestBody(registry, hintBase, requestBody) {
 // A success response's content type follows the same content-type-driven policy as request bodies
 // (see buildRequestBody) - application/json gets a real generated type, a single "text/*" media
 // type maps to str, a single other media type maps to raw bytes; no content: means an empty body.
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { type: "None", statusCode: 200, encoding: "none", mediaType: null };
-  const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
-  const content = picked.response.content || {};
+function buildResponseBody(registry, typeHint, statusCode, response, valueExpr) {
+  const content = response.content || {};
   if (Object.keys(content).length === 0) return { type: "None", statusCode, encoding: "none", mediaType: null };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = pyType(registry, jsonContent.schema || {}, hintBase + "Response");
-    return { type: t.label, statusCode, encoding: "json", mediaType: JSON_MEDIA_TYPE, toWireExpr: buildToWireExpr(t.descriptor, "result") };
+    const t = pyType(registry, jsonContent.schema || {}, typeHint);
+    return { type: t.label, statusCode, encoding: "json", mediaType: JSON_MEDIA_TYPE, toWireExpr: buildToWireExpr(t.descriptor, valueExpr) };
   }
   const remaining = Object.keys(content);
   if (remaining.length === 1) {
     const mediaType = remaining[0];
     const encoding = isTextMediaType(mediaType) ? "text" : "bytes";
-    return { type: encoding === "text" ? "str" : "bytes", statusCode, encoding, mediaType };
+    return { type: encoding === "text" ? "str" : "Union[bytes, runtime.BinaryContent]", statusCode, encoding, mediaType };
   }
   throw Error(
-    `<e2f7c8a1> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
+    `<e2f7c8a1> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
       `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as raw bytes) are supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, not a
+// separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps the plain `-> T` return type. Two or more (e.g. 200 for a
+// synchronous result, 202 for an accepted background job) become one dataclass per status code
+// plus a Union alias of them, so the handler picks the status at runtime by which one it returns.
+function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { type: "None", statusCode: 200, encoding: "none", mediaType: null, variants: null };
+    const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
+    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response, "result"), variants: null };
+  }
+  // The api module star-imports the models module - a same-named class here would shadow a model.
+  const unique = (base) => {
+    let name = base;
+    let n = 2;
+    while (usedTypeNames.has(name) || registry.models.has(name)) name = base + n++;
+    usedTypeNames.add(name);
+    return name;
+  };
+  const aliasName = unique(className(opName) + "Response");
+  const variants = entries.map(({ statusCode, response }) => ({
+    ...buildResponseBody(registry, hintBase + statusCode + "Response", parseInt(statusCode, 10), response, "result.body"),
+    className: unique(className(opName) + statusCode + "Response"),
+    description: `The ${statusCode} response${response.description ? ": " + response.description : "."}`,
+  }));
+  return { type: aliasName, statusCode: null, encoding: "variants", mediaType: null, variants };
 }
 
 function buildDocstring(summary, description, params) {
@@ -533,15 +576,36 @@ function buildMethodBodyLines(op, pathParams) {
     `    raise HTTPError(401, reason=str(exc))`,
     `except ValidationError as exc:`,
     `    raise HTTPError(422, reason=str(exc))`,
+    ...(op.body && op.body.encoding === "bytes"
+      ? [`except runtime.UnsupportedMediaTypeError as exc:`, `    raise HTTPError(415, reason=str(exc))`]
+      : []),
   ];
 
-  if (op.response.statusCode !== 200) lines.push(`self.set_status(${op.response.statusCode})`);
-  if (op.response.encoding === "json") {
+  if (op.response.variants) {
+    op.response.variants.forEach((v, i) => {
+      lines.push(`${i === 0 ? "if" : "elif"} isinstance(result, ${v.className}):`);
+      const writeLines = buildWriteResponseLines(v, "result.body");
+      lines.push(...indentLines(writeLines.length > 0 ? writeLines : ["pass"], "    "));
+    });
+    lines.push(`else:`);
+    lines.push(`    raise HTTPError(500, reason=f"${op.name} returned an unexpected response variant {type(result).__name__}")`);
+  } else {
+    lines.push(...buildWriteResponseLines(op.response, "result"));
+  }
+  return lines;
+}
+
+function buildWriteResponseLines(response, valueExpr) {
+  const lines = [];
+  if (response.statusCode !== 200) lines.push(`self.set_status(${response.statusCode})`);
+  if (response.encoding === "json") {
     lines.push(`self.set_header("Content-Type", "application/json")`);
-    lines.push(`self.write(json.dumps(${op.response.toWireExpr}))`);
-  } else if (op.response.encoding === "text" || op.response.encoding === "bytes") {
-    lines.push(`self.set_header("Content-Type", ${escapePythonString(op.response.mediaType)})`);
-    lines.push(`self.write(result)`);
+    lines.push(`self.write(json.dumps(${response.toWireExpr}))`);
+  } else if (response.encoding === "text") {
+    lines.push(`self.set_header("Content-Type", ${escapePythonString(response.mediaType)})`);
+    lines.push(`self.write(${valueExpr})`);
+  } else if (response.encoding === "bytes") {
+    lines.push(`runtime.write_binary(self, ${escapePythonString(response.mediaType)}, ${valueExpr})`);
   }
   return lines;
 }
@@ -550,6 +614,8 @@ function buildMethodBodyLines(op, pathParams) {
 // handlerClass, pathParams, pathSignature, operations: [...] }] }> in path-declaration order.
 export function collectOperationsByPathAndTag(registry) {
   const tags = new Map();
+  // Response variant classes/aliases, shared across every tag's api module.
+  const usedTypeNames = new Set(["BinaryContent"]);
 
   for (const op of collectOperations()) {
     // tornado.web.RequestHandler.SUPPORTED_METHODS has no TRACE - same reason
@@ -570,7 +636,7 @@ export function collectOperationsByPathAndTag(registry) {
         const otherParams = [...buildAuthParams(op.security), ...allParams.filter((p) => !p.isPath)];
 
         const body = buildRequestBody(registry, hintBase, op.requestBody);
-        const response = buildResponse(registry, hintBase, op.responses);
+        const response = buildResponse(registry, hintBase, opName, op.responses, usedTypeNames);
         const { signature, callArgs } = buildSignatures(pathParams, otherParams, body);
 
         const docstring = buildDocstring(

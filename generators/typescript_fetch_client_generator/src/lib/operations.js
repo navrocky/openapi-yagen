@@ -372,8 +372,10 @@ function buildRequestBody(registry, hintBase, requestBody) {
   if (picked.encoding === "text") {
     return { tsType: "string", required: requestBody.required === true, encoding: "text", mediaType: picked.mediaType };
   }
+  // A wildcard declared media type ("application/*") isn't a valid Content-Type to send.
   if (picked.encoding === "bytes") {
-    return { tsType: "Uint8Array", required: requestBody.required === true, encoding: "bytes", mediaType: picked.mediaType };
+    const wireMediaType = picked.mediaType.includes("*") ? "application/octet-stream" : picked.mediaType;
+    return { tsType: "Uint8Array", required: requestBody.required === true, encoding: "bytes", mediaType: wireMediaType };
   }
   const t = tsType(registry, bodySchema, hintBase + "Body");
   return { tsType: t.type, required: requestBody.required === true, encoding: picked.encoding, mediaType: null };
@@ -387,26 +389,61 @@ function buildRequestBody(registry, hintBase, requestBody) {
 // buildRequestBody, and same reasoning for why more than one remaining media type is still a loud
 // error instead of a guess (see README "Known limitations"). Neither "text" nor "bytes" gets a
 // validator (there's no JSON structure to check against).
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { tsType: "void", statusCode: null, descriptor: null, encoding: "json" };
-  const content = picked.response.content || {};
-  if (Object.keys(content).length === 0) return { tsType: "void", statusCode: picked.statusCode, descriptor: null, encoding: "json" };
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
+  if (Object.keys(content).length === 0) return { tsType: "void", statusCode, descriptor: null, encoding: "json" };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = tsType(registry, jsonContent.schema || {}, hintBase + "Response");
-    return { tsType: t.type, statusCode: picked.statusCode, descriptor: t.descriptor, encoding: "json" };
+    const t = tsType(registry, jsonContent.schema || {}, typeHint);
+    return { tsType: t.type, statusCode, descriptor: t.descriptor, encoding: "json" };
   }
   const remaining = Object.keys(content);
   if (remaining.length === 1) {
     const encoding = isTextMediaType(remaining[0]) ? "text" : "bytes";
-    return { tsType: encoding === "text" ? "string" : "Uint8Array", statusCode: picked.statusCode, descriptor: null, encoding };
+    return { tsType: encoding === "text" ? "string" : "Uint8Array", statusCode, descriptor: null, encoding };
   }
   throw Error(
-    `<b4e8f036> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
+    `<b4e8f036> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
       `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (returned as raw bytes) ` +
       `are supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, not a
+// separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps the plain `Promise<T>` return type (parsed regardless of the
+// actual 2xx status). Two or more become a discriminated union on `status`, one member per status
+// code, parsed according to the actual response status.
+function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { tsType: "void", statusCode: null, descriptor: null, encoding: "json", variants: null };
+    return { ...buildResponseBody(registry, hintBase + "Response", picked.statusCode, picked.response), variants: null };
+  }
+  // Exported from the same index.ts as every model, so it must not reuse a model's name either.
+  let aliasName = typeName(opName) + "Response";
+  let n = 2;
+  while (usedTypeNames.has(aliasName) || registry.models.has(aliasName)) aliasName = typeName(opName) + "Response" + n++;
+  usedTypeNames.add(aliasName);
+  const variants = entries.map(({ statusCode, response }) => {
+    const body = buildResponseBody(registry, hintBase + statusCode + "Response", statusCode, response);
+    return { ...body, hasBody: body.tsType !== "void", description: response.description || null };
+  });
+  return { tsType: aliasName, statusCode: null, descriptor: null, encoding: "json", variants, aliasName };
 }
 
 // When `validateResponses` is enabled, builds the expression passed as request()'s `validate`
@@ -436,6 +473,9 @@ function tagDescription(tagName) {
 // the tag group's modelImports include the guard functions referenced by generated validators.
 export function collectOperationsByTag(registry, validateResponses) {
   const groups = new Map();
+  // Multi-response union aliases are exported from index.ts alongside every tag's, so they share
+  // one namespace across tags.
+  const usedTypeNames = new Set(["ApiClient", "ApiError", "ResponseValidationError"]);
   for (const op of collectOperations()) {
     // TRACE is rejected outright by the Fetch spec (browsers refuse to send it) - a generated
     // trace() method could never actually be called, so it's skipped unconditionally, same as the
@@ -472,7 +512,7 @@ export function collectOperationsByTag(registry, validateResponses) {
         const headerParams = allParams.filter((p) => p.in === "header").map((p) => buildHeaderParam(registry, hintBase, p));
 
         const body = buildRequestBody(registry, hintBase, op.requestBody);
-        const response = buildResponse(registry, hintBase, op.responses);
+        const response = buildResponse(registry, hintBase, opName, op.responses, usedTypeNames);
         const pathExpr = buildPathExpr(op.path, pathParams);
 
         const optionsFields = [
@@ -492,11 +532,17 @@ export function collectOperationsByTag(registry, validateResponses) {
           ...queryParams.map((p) => p.tsType),
           ...headerParams.map((p) => p.tsType),
           ...(body ? [body.tsType] : []),
-          response.tsType,
+          ...(response.variants ? response.variants.map((v) => v.tsType) : [response.tsType]),
         ];
         for (const m of collectReferencedModelNames(referencedTypeStrings, registry, null)) group.modelImportsSet.add(m);
 
-        const validatorExpr = validateResponses ? buildResponseValidatorExpr(response) : null;
+        const validatorExpr = validateResponses && !response.variants ? buildResponseValidatorExpr(response) : null;
+        if (response.variants) {
+          for (const v of response.variants) {
+            v.validatorExpr = validateResponses ? buildResponseValidatorExpr(v) : null;
+            v.encodingLiteral = v.hasBody ? v.encoding : "none";
+          }
+        }
 
         // An unsupported security scheme (mutualTLS, or a cookie-located apiKey - a browser-first
         // fetch client can't send those) only drops the auth wiring for this one operation

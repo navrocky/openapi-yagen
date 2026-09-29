@@ -19,7 +19,7 @@ module {{ moduleName }}
 {% endif %}{% if op.hasHeaderParams %}      headers = { {% for p in op.headerParams %}{{ toStringLiteral(p.wireName) }} => {{ p.rubyName }}{% if not loop.is_last %}, {% endif %}{% endfor %} }
 {% endif %}{% if op.hasCookieParams %}      cookies = { {% for p in op.cookieParams %}{{ toStringLiteral(p.wireName) }} => {{ p.rubyName }}{% if not loop.is_last %}, {% endif %}{% endfor %} }
 {% endif %}{% if op.body %}      body = {{ op.bodyWireExpr }}
-{% endif %}      parsed = Runtime.request(
+{% endif %}      {% if op.response.variants %}status, parsed{% else %}parsed{% endif %} = Runtime.request(
         connection: @connection,
         method: :{{ op.method }},
         path: "#{@base_url}{{ op.pathExpr }}",
@@ -29,11 +29,17 @@ module {{ moduleName }}
 {% endif %}{% if op.body %}        body: body,
         content_type: :{{ op.body.encoding }},
 {% if op.body.mediaType %}        media_type: {{ toStringLiteral(op.body.mediaType) }},
-{% endif %}{% endif %}{% if op.hasResponse %}{% if op.response.encoding != "json" %}        response_encoding: :{{ op.response.encoding }},
+{% endif %}{% endif %}{% if op.response.variants %}        responses: { {% for v in op.response.variants %}{{ v.statusCode }} => :{{ v.encodingSymbol }}{% if not loop.is_last %}, {% endif %}{% endfor %} },
+{% else if op.hasResponse %}{% if op.response.encoding != "json" %}        response_encoding: :{{ op.response.encoding }},
 {% endif %}{% endif %}{% if op.authLiteral %}        auth: {{ op.authLiteral }},
         auth_config: @auth,
 {% endif %}      )
-{% if op.hasResponse %}      {{ op.responseFromHExpr }}
+{% if op.response.variants %}      body =
+        case status
+{% for v in op.response.variants %}        when {{ v.statusCode }} then {{ v.fromHExpr }}
+{% endfor %}        end
+      Runtime::Response.new(status: status, body: body)
+{% else if op.hasResponse %}      {{ op.responseFromHExpr }}
 {% else %}      nil
 {% endif %}    end
 {% endfor %}

@@ -112,7 +112,7 @@ function registerClass(registry, name, schema) {
       validateStatements,
     });
   }
-  // AGENTS.md: "every generator must thread OpenAPI description into generated doc comments" -
+  // docs/develop/generator-conventions.md: "every generator must thread OpenAPI description into generated doc comments" -
   // covers each property (see model_class.rb.j2's attr_accessor loop, using each property's own
   // label/description directly) and, here, the constructor - reuses the engine's buildDocComment
   // rather than hand-formatting `# @param` lines, with `[Type]` embedded into each param's own

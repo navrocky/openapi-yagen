@@ -43,6 +43,7 @@ models/<Name>.kt        one file per schema
 apis/<Tag>Handler.kt    interface you implement with your business logic
 apis/<Tag>Routes.kt     class that wires a Route to a <Tag>Handler
 Validation.kt           shared parameter-extraction/constraint-checking helpers, rendered once
+Binary.kt               BinaryBody/BinaryContent for raw request/response bodies, rendered once
 ModelValidation.kt      validate() extension for every object model, rendered once
 OpenApiSpecRoute.kt     only if publishOpenApiSpec=true - see "Publishing the OpenAPI spec"
 ```
@@ -52,7 +53,7 @@ doesn't require a file's physical location to mirror its `package` declaration, 
 points already lives inside whatever package-derived source tree you're integrating into, so
 another nested layer here would just be redundant. `packageName` is a *base* package: `models/`
 is generated into `packageName.models`, `apis/` into `packageName.apis`; `Validation.kt` and
-`ModelValidation.kt` stay at `packageName` itself.
+`ModelValidation.kt` and `Binary.kt` stay at `packageName` itself.
 
 ## Sharing models with the client generator
 
@@ -118,7 +119,10 @@ fun Application.module() {
 Add these dependencies to the module the generated code lives in: `io.ktor:ktor-server-core`,
 `org.jetbrains.kotlinx:kotlinx-serialization-json`, and `org.jetbrains.kotlinx:kotlinx-datetime`
 (only needed if the spec uses `date`/`date-time` formats). Add `io.ktor:ktor-server-status-pages`
-if you use the `StatusPages` mapping shown above (recommended).
+if you use the `StatusPages` mapping shown above (recommended). If the spec has raw (binary)
+responses, also install `PartialContent` (`io.ktor:ktor-server-partial-content`, for `Range`
+requests) and `ConditionalHeaders` (`io.ktor:ktor-server-conditional-headers`, for
+`If-Modified-Since`) - see "Raw response bodies".
 
 `format: date-time` properties/parameters generate `kotlinx.datetime.Instant` by default, which
 needs `kotlinx-datetime < 0.7.0` - that release moved `Instant` to be an alias for
@@ -145,7 +149,7 @@ required/nullable handling.
 
 Request-body content types are picked from whichever the spec declares in priority order
 `application/json` > `multipart/form-data` > `application/x-www-form-urlencoded` > (a single
-remaining media type, received as a `String` or raw `ByteArray`):
+remaining media type, received as a `String` or a raw `BinaryBody`):
 
 - **`application/json`** (default): `call.receive<Body>()`, validated the same way as always -
   the handler method's `body:` parameter is the generated `@Serializable` data class.
@@ -169,25 +173,92 @@ remaining media type, received as a `String` or raw `ByteArray`):
   String>()`, the handler method's `body:` parameter is a plain `String` - Ktor receives a `String`
   body as-is, no `ContentNegotiation` plugin needed.
 - **any single other remaining media type** (`application/octet-stream`, `application/zip`,
-  `application/pdf`, `image/png`, ...): `call.receive<ByteArray>()`, the handler method's `body:`
-  parameter is a raw `ByteArray` - Ktor receives a `ByteArray` body as-is too. This only applies to
-  a `format: binary` schema used as the ENTIRE request body (not as one property of a multipart/
-  urlencoded object) - the wire content-type alone decides `String` vs. `ByteArray` here, same as
-  it does at runtime for a real client/server.
+  `application/pdf`, `image/png`, ...): the handler method's `body:` parameter is a `BinaryBody` -
+  see "Raw request bodies" below. This only applies to a `format: binary` schema used as the ENTIRE
+  request body (not as one property of a multipart/urlencoded object) - the wire content-type alone
+  decides `String` vs. raw here, same as it does at runtime for a real client/server.
 
   A requestBody declaring two or more media types outside the three fixed ones above is ambiguous
   (which one would the generated handler actually expect?) and is a generator error, same as any
   other unsupported content-type - see "Known limitations".
 
+#### Raw request bodies
+
+A raw body reaches the handler as a `BinaryBody` - the request body still **unread**, so each
+handler implementation decides per operation whether to buffer it or stream it:
+
+```kotlin
+// Small payload: just take the bytes (optionally capped - past the cap, 413).
+override suspend fun uploadPetAvatar(petId: String, body: BinaryBody) {
+    avatars.save(petId, body.bytes(maxBytes = 5 * 1024 * 1024))
+}
+
+// Large payload: stream it without buffering.
+override suspend fun restoreBackup(body: BinaryBody) {
+    body.channel().copyTo(storage.openWriteChannel())
+}
+```
+
+`BinaryBody` also exposes `contentType` (the request's media type, without parameters),
+`contentLength` (null if unknown) and the request's `headers`. Read it at most once.
+
+Before the handler runs, the request's `Content-Type` is checked against the declared media type
+(which may be a wildcard like `application/*`); a mismatch throws Ktor's
+`UnsupportedMediaTypeException` (415 with Ktor's default exception handling), and `bytes(maxBytes)`
+throws `PayloadTooLargeException` (413). A body sent without any `Content-Type` is treated as
+`application/octet-stream` (RFC 9110). An empty body for a `required` requestBody throws
+`BadRequestException` (400); for an optional one, `body` is `null`.
+
 ### Response content types
 
 A success response's content type follows the same policy: `application/json` (default) is sent
 via the ordinary `call.respond(status, result)`; a single `text/*` media type is sent via
-`call.respondText(result, ContentType.parse("..."), status)`, and a single other media type via
-`call.respondBytes(result, ContentType.parse("..."), status)` - both set the exact declared media
-type as the response's `Content-Type` header (e.g. `text/csv`, not a generic `text/plain`), and the
-handler method's return type is `String`/`ByteArray` to match. More than one remaining media type on
-a response is a generator error too.
+`call.respondText(result, ContentType.parse("..."), status)` with the handler returning a `String`,
+and a single other media type is a `BinaryContent` (below). The exact declared media type is set as
+the response's `Content-Type` header (e.g. `text/csv`, not a generic `text/plain`). More than one
+remaining media type on a response is a generator error too.
+
+#### Raw response bodies
+
+```kotlin
+// In memory:
+return BinaryContent(pngBytes)
+
+// Streamed (JVM example), with a filename and modification time:
+return BinaryContent(file.length(), name = "backup.tar.gz", lastModified = GMTDate(file.lastModified())) {
+    file.readChannel()
+}
+```
+
+`name` is sent as `Content-Disposition: attachment; filename="..."`, `contentType` overrides the
+declared media type (a declared wildcard such as `application/*` is otherwise sent as
+`application/octet-stream`). With Ktor's `PartialContent` plugin installed, a `Range` request
+against a 200 response whose length is known (always true for in-memory bytes) is answered with
+`206 Partial Content` automatically - so a `206` response declared with the same media type as the
+`200` is not a separate response the handler returns. With `ConditionalHeaders` installed,
+`lastModified` also answers `If-Modified-Since` with `304 Not Modified`.
+
+### Multiple success responses
+
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) returns a sealed interface with one nested `StatusNNN` per status
+code - the handler picks the status by which one it returns:
+
+```kotlin
+// Generated (apis package):
+sealed interface CreateBackupResponse {
+    class Status200(val body: BinaryContent) : CreateBackupResponse // 200, application/zip
+    class Status202(val body: Operation) : CreateBackupResponse     // 202, application/json
+    object Status204 : CreateBackupResponse                         // a response without content
+}
+
+// Implementation:
+override suspend fun createBackup(sync: Boolean?): CreateBackupResponse =
+    if (sync == true) CreateBackupResponse.Status200(buildNow()) else CreateBackupResponse.Status202(startInBackground())
+```
+
+Each variant's `body` follows the same media type rules as a single response. An operation with a
+single success response keeps the plain `suspend fun op(...): T` signature.
 
 ## Publishing the OpenAPI spec
 
@@ -308,8 +379,13 @@ find out -name "*.kt" | xargs java -jar ktfmt-<version>-with-dependencies.jar --
 
 ## Known limitations (v1)
 
+- A multipart `format: binary` file part is read fully into memory as a `ByteArray` - only a raw
+  (non-form) request body is streamed.
+- Only explicitly numbered `2xx` responses become separate response variants; a range (`2XX`) or
+  `default` response is used only when no numbered `2xx` response exists.
+
 - Request and response bodies support `application/json`, a single `text/*` media type (as a
-  `String`), and a single other media type (as a raw `ByteArray`); request bodies additionally
+  `String`), and a single other media type (as `BinaryBody`/`BinaryContent`); request bodies additionally
   support `application/x-www-form-urlencoded` and `multipart/form-data` (see "Request body content
   types" and "Response content types" above). **A requestBody/response declaring two or more media
   types outside those fixed ones is a generator error** (aborts generation under default

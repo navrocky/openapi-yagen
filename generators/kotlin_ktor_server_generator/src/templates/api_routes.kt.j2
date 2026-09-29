@@ -9,7 +9,6 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
@@ -20,6 +19,7 @@ import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 
+{% macro respondWith(encoding, statusCode, mediaType, value) %}{% if encoding == "text" %}call.respondText({{ value }}, ContentType.parse({{ toStringLiteral(mediaType) }}), HttpStatusCode.fromValue({{ statusCode }})){% else if encoding == "bytes" %}call.respondBinary(HttpStatusCode.fromValue({{ statusCode }}), {{ toStringLiteral(mediaType) }}, {{ value }}){% else if encoding == "json" %}call.respond(HttpStatusCode.fromValue({{ statusCode }}), {{ value }}){% else %}call.respond(HttpStatusCode.fromValue({{ statusCode }})){% endif %}{% endmacro -%}
 // Parses and validates each request (path/query/header parameters via Validation.kt, and the
 // body via its generated validate() when the body model has constraints) before calling into
 // the handler - handler implementations only ever see clean, typed, already-validated values.
@@ -49,13 +49,16 @@ val body = {{ op.body.type }}(
 {% for f in op.body.fields %}    {{ f.ktName }} = {% if f.isArray %}bodyParams.{% if f.nullable %}paramListAs{% else %}requireParamListAs{% endif %}({{ toStringLiteral(f.wireName) }}, {{ toStringLiteral(f.typeLabel) }}) { {{ f.converter }} }{% else %}bodyParams.{% if f.nullable %}paramAs{% else %}requireParamAs{% endif %}({{ toStringLiteral(f.wireName) }}, {{ toStringLiteral(f.typeLabel) }}) { {{ f.converter }} }{% endif %},
 {% endfor %}){% if op.body.hasValidate %}.validate(){% endif %}
 
+{% else if op.body.encoding == "bytes" %}val body = call.{% if op.body.required %}requireBinaryBody{% else %}optionalBinaryBody{% endif %}({{ toStringLiteral(op.body.mediaType) }})
+
 {% else %}val body = call.receive<{{ op.body.type }}>(){% if op.body.hasValidate %}.validate(){% endif %}
 
-{% endif %}{% endif %}{% if op.returnsValue %}val result = handler.{{ op.name }}({{ op.handlerArgs }})
-{% if op.response.encoding == "text" %}call.respondText(result, ContentType.parse({{ toStringLiteral(op.response.mediaType) }}), HttpStatusCode.fromValue({{ op.response.statusCode }}))
-{% else if op.response.encoding == "bytes" %}call.respondBytes(result, ContentType.parse({{ toStringLiteral(op.response.mediaType) }}), HttpStatusCode.fromValue({{ op.response.statusCode }}))
-{% else %}call.respond(HttpStatusCode.fromValue({{ op.response.statusCode }}), result)
-{% endif %}{% else %}handler.{{ op.name }}({{ op.handlerArgs }})
+{% endif %}{% endif %}{% if op.response.variants %}when (val result = handler.{{ op.name }}({{ op.handlerArgs }})) {
+{% for v in op.response.variants %}    is {{ op.response.type }}.{{ v.className }} -> {{ respondWith(v.encoding, v.statusCode, v.mediaType, "result.body") }}
+{% endfor %}}
+{% else if op.returnsValue %}val result = handler.{{ op.name }}({{ op.handlerArgs }})
+{{ respondWith(op.response.encoding, op.response.statusCode, op.response.mediaType, "result") }}
+{% else %}handler.{{ op.name }}({{ op.handlerArgs }})
 call.respond(HttpStatusCode.fromValue({{ op.response.statusCode }}))
 {% endif %}{% endfilter %}        }
 {% endfor %}

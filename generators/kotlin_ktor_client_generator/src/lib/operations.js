@@ -293,8 +293,10 @@ function buildRequestBody(registry, hintBase, requestBody) {
   if (picked.encoding === "text") {
     return { type: "String", required: requestBody.required === true, encoding: "text", mediaType: picked.mediaType };
   }
+  // A wildcard declared media type ("application/*") isn't a valid Content-Type to send.
   if (picked.encoding === "bytes") {
-    return { type: "ByteArray", required: requestBody.required === true, encoding: "bytes", mediaType: picked.mediaType };
+    const wireMediaType = picked.mediaType.includes("*") ? "application/octet-stream" : picked.mediaType;
+    return { type: "ByteArray", required: requestBody.required === true, encoding: "bytes", mediaType: wireMediaType };
   }
   if (picked.encoding !== "json") requireFlatObjectSchema(bodySchema, picked.mediaType);
   const t = ktType(registry, bodySchema, hintBase + "Body");
@@ -323,15 +325,12 @@ function buildRequestBody(registry, hintBase, requestBody) {
 // `ByteArray` - both natively readable via Ktor's `response.body<T>()` with no extra plugin, same
 // content-type-driven policy as buildRequestBody. More than one remaining media type is still a
 // loud error, not a guess (see README "Known limitations").
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { type: "Unit", statusCode: 200 };
-  const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
-  const content = picked.response.content || {};
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
   if (Object.keys(content).length === 0) return { type: "Unit", statusCode };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = ktType(registry, jsonContent.schema || {}, hintBase + "Response");
+    const t = ktType(registry, jsonContent.schema || {}, typeHint);
     return { type: t.type, statusCode };
   }
   const remaining = Object.keys(content);
@@ -339,10 +338,50 @@ function buildResponse(registry, hintBase, responses) {
     return { type: isTextMediaType(remaining[0]) ? "String" : "ByteArray", statusCode };
   }
   throw Error(
-    `<2d5f8a4c> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
+    `<2d5f8a4c> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
       `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as ByteArray) are ` +
       `supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, not a
+// separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps the plain `suspend fun op(...): T` signature (decoded regardless
+// of the actual status). Two or more become a sealed interface with one nested StatusNNN class per
+// status code, picked by the actual response status.
+function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { type: "Unit", statusCode: 200, variants: null };
+    const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
+    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response), variants: null };
+  }
+  // Checked against model names too: the apis package star-imports the models package, and a
+  // same-named declaration in apis would shadow the model there.
+  let interfaceName = className(opName) + "Response";
+  let n = 2;
+  while (usedTypeNames.has(interfaceName) || registry.models.has(interfaceName)) interfaceName = className(opName) + "Response" + n++;
+  usedTypeNames.add(interfaceName);
+  const variants = entries.map(({ statusCode, response }) => ({
+    ...buildResponseBody(registry, hintBase + statusCode + "Response", parseInt(statusCode, 10), response),
+    className: "Status" + statusCode,
+    description: `The ${statusCode} response${response.description ? ": " + response.description : "."}`,
+  }));
+  return { type: interfaceName, statusCode: null, variants };
 }
 
 // Looks up a tag's own document-level description (schema.tags: [{name, description}] - distinct
@@ -358,6 +397,9 @@ function tagDescription(tagName) {
 // path-declaration order.
 export function collectOperationsByTag(registry) {
   const groups = new Map();
+  // Response variant interfaces are declared at package level in the apis package, shared by every
+  // tag.
+  const usedTypeNames = new Set();
   for (const op of collectOperations()) {
     // Ktor's HttpClient/routing DSL has no trace() builder - keep the same generated surface as
     // before rather than silently starting to emit trace operations now that collectOperations()
@@ -380,7 +422,7 @@ export function collectOperationsByTag(registry) {
         const cookieParams = allParams.filter((p) => p.in === "cookie");
 
         const body = buildRequestBody(registry, hintBase, op.requestBody);
-        const response = buildResponse(registry, hintBase, op.responses);
+        const response = buildResponse(registry, hintBase, opName, op.responses, usedTypeNames);
         const { signatureParams, handlerArgs } = buildSignature(allParams, body);
 
         if (!groups.has(tag)) groups.set(tag, { tagClass, propertyName, description: tagDescription(tag), operations: [] });

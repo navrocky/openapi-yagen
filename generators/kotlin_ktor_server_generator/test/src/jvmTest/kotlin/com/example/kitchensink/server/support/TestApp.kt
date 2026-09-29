@@ -1,9 +1,15 @@
 package com.example.kitchensink.server.support
 
+import com.example.kitchensink.server.apis.FilesApiHandler
+import com.example.kitchensink.server.apis.FilesApiRoutes
+import com.example.kitchensink.server.apis.JobsApiHandler
+import com.example.kitchensink.server.apis.JobsApiRoutes
 import com.example.kitchensink.server.apis.PetsApiHandler
 import com.example.kitchensink.server.apis.PetsApiRoutes
 import com.example.kitchensink.server.apis.WidgetsApiHandler
 import com.example.kitchensink.server.apis.WidgetsApiRoutes
+import com.example.kitchensink.server.fakes.FakeFilesApiHandler
+import com.example.kitchensink.server.fakes.FakeJobsApiHandler
 import com.example.kitchensink.server.fakes.FakePetsApiHandler
 import com.example.kitchensink.server.MissingAuthenticationException
 import com.example.kitchensink.server.OpenApiSpecRoute
@@ -13,6 +19,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.conditionalheaders.ConditionalHeaders
+import io.ktor.server.plugins.partialcontent.PartialContent
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respondText
@@ -30,9 +38,13 @@ import io.ktor.server.testing.ApplicationTestBuilder
 fun ApplicationTestBuilder.installKitchenSinkApp(
     petsHandler: PetsApiHandler = FakePetsApiHandler(),
     widgetsHandler: WidgetsApiHandler = FakeWidgetsApiHandler(),
+    filesHandler: FilesApiHandler = FakeFilesApiHandler(),
+    jobsHandler: JobsApiHandler = FakeJobsApiHandler(),
 ) {
     application {
         install(ContentNegotiation) { json() }
+        install(PartialContent)
+        install(ConditionalHeaders)
         install(StatusPages) {
             exception<BadRequestException> { call, e ->
                 call.respondText(e.message ?: "Bad request", status = HttpStatusCode.BadRequest)
@@ -47,6 +59,8 @@ fun ApplicationTestBuilder.installKitchenSinkApp(
         routing {
             PetsApiRoutes(this, petsHandler)
             WidgetsApiRoutes(this, widgetsHandler)
+            FilesApiRoutes(this, filesHandler)
+            JobsApiRoutes(this, jobsHandler)
             OpenApiSpecRoute(this)
         }
     }

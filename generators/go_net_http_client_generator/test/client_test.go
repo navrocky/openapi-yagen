@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -334,12 +335,137 @@ func TestUploadPetAvatarBytes(t *testing.T) {
 		w.Write(body)
 	})
 	c := newTestClient(t, handler)
-	result, err := c.Pets.UploadPetAvatar(context.Background(), "1", []byte{1, 2, 3})
+	file, err := c.Pets.UploadPetAvatar(context.Background(), "1", bytes.NewReader([]byte{1, 2, 3}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := file.Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(result, []byte{1, 2, 3}) {
 		t.Fatalf("unexpected result: %v", result)
+	}
+}
+
+func TestPutFileStreamsRequestBody(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/files/a" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/octet-stream" {
+			t.Fatalf("unexpected Content-Type %q", ct)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "streamed" {
+			t.Fatalf("unexpected body %q", body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	c := newTestClient(t, handler)
+	// A non-seekable reader: sent as-is, never buffered by the client.
+	if err := c.Files.PutFile(context.Background(), "a", io.MultiReader(strings.NewReader("stream"), strings.NewReader("ed"))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEchoFileWildcardAndOptionalBody(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if len(body) == 0 {
+			if r.Header.Get("Content-Type") != "application/octet-stream" {
+				t.Fatalf("expected a wildcard media type to be sent as application/octet-stream, got %q", r.Header.Get("Content-Type"))
+			}
+			body = []byte("empty")
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(body)
+	})
+	c := newTestClient(t, handler)
+	file, err := c.Files.EchoFile(context.Background(), "x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := file.Bytes()
+	if string(data) != "empty" || file.ContentType != "application/zip" {
+		t.Fatalf("unexpected response %q (%s)", data, file.ContentType)
+	}
+}
+
+func TestGetFileStreamsResponse(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="hello.bin"`)
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader("hello, world"))
+	})
+	c := newTestClient(t, handler)
+	file, err := c.Files.GetFile(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if file.Name != "hello.bin" || file.StatusCode != http.StatusOK || file.ContentLength != 12 {
+		t.Fatalf("unexpected file metadata: %+v", file)
+	}
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(file.Body, buf); err != nil || string(buf) != "hello" {
+		t.Fatalf("expected to stream the first bytes, got %q (%v)", buf, err)
+	}
+}
+
+func TestCreateArchiveMultipleSuccessResponses(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sync") == "true" {
+			w.Header().Set("Content-Type", "application/zip")
+			w.Write([]byte("PKzip"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"id":"job-1"}`))
+	})
+	c := newTestClient(t, handler)
+	sync := true
+	resp, err := c.Jobs.CreateArchive(context.Background(), &sync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, ok := resp.(client.CreateArchive200Response)
+	if !ok {
+		t.Fatalf("expected a 200 variant, got %T", resp)
+	}
+	data, _ := archive.Body.Bytes()
+	if string(data) != "PKzip" {
+		t.Fatalf("unexpected archive %q", data)
+	}
+
+	resp, err = c.Jobs.CreateArchive(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, ok := resp.(client.CreateArchive202Response)
+	if !ok || accepted.Body.Id != "job-1" {
+		t.Fatalf("expected a 202 variant with job-1, got %#v", resp)
+	}
+}
+
+func TestMultipleSuccessResponsesUndeclaredStatus(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+	c := newTestClient(t, handler)
+	_, err := c.Jobs.Ping(context.Background())
+	var respErr *client.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a ResponseError for an undeclared 201, got %v", err)
+	}
+
+	handler2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	c2 := newTestClient(t, handler2)
+	resp, err := c2.Jobs.Rebuild(context.Background())
+	if _, ok := resp.(client.Rebuild204Response); err != nil || !ok {
+		t.Fatalf("expected a 204 variant, got %T (%v)", resp, err)
 	}
 }
 

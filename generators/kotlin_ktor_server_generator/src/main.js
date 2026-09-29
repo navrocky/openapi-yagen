@@ -72,6 +72,7 @@ if (generate !== "models") {
   }
 
   renderTemplate("templates/validation.kt.j2", { packageName, modelsPackage, apisPackage }, "Validation.kt");
+  renderTemplate("templates/binary.kt.j2", { packageName }, "Binary.kt");
 
   // Routes call .validate() (see api_routes.kt.j2's op.body.hasValidate) on whatever the body
   // model type turns out to be, whether or not this run also generated models/*.kt - so these

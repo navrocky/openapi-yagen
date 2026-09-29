@@ -292,7 +292,8 @@ function buildRequestBody(registry, hintBase, requestBody) {
       descriptor: { kind: "primitive" },
       required: requestBody.required === true,
       encoding: picked.encoding,
-      mediaType: picked.mediaType,
+      // A wildcard declared media type ("application/*") isn't a valid Content-Type to send.
+      mediaType: picked.mediaType.includes("*") ? "application/octet-stream" : picked.mediaType,
     };
   }
   const bodySchema = picked.content.schema || {};
@@ -307,14 +308,12 @@ function buildRequestBody(registry, hintBase, requestBody) {
 // plain Ruby `String` (Ruby has no separate byte-array type - see buildRequestBody above), read via
 // Runtime.request's response_encoding: without attempting a JSON.parse. More than one
 // remaining media type is still a loud error, not a guess (see README "Known limitations").
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { label: null, descriptor: null, encoding: "json", mediaType: null };
-  const content = picked.response.content || {};
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
   if (Object.keys(content).length === 0) return { label: null, descriptor: null, encoding: "json", mediaType: null };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = rubyType(registry, jsonContent.schema || {}, hintBase + "Response");
+    const t = rubyType(registry, jsonContent.schema || {}, typeHint);
     return { label: t.label, descriptor: t.descriptor, encoding: "json", mediaType: null };
   }
   const remaining = Object.keys(content);
@@ -323,10 +322,48 @@ function buildResponse(registry, hintBase, responses) {
     return { label: "String", descriptor: { kind: "primitive" }, encoding: isTextMediaType(mediaType) ? "text" : "bytes", mediaType };
   }
   throw Error(
-    `<7e4f9a2b> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
+    `<7e4f9a2b> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
       `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as raw bytes) are ` +
       `supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, not a
+// separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps returning the plain decoded body (whatever 2xx status actually
+// arrives). Two or more return a Runtime::Response (status + body), the body decoded according to
+// the actual response status.
+function buildResponse(registry, hintBase, responses) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { label: null, descriptor: null, encoding: "json", mediaType: null, variants: null };
+    return { ...buildResponseBody(registry, hintBase + "Response", picked.statusCode, picked.response), variants: null };
+  }
+  const variants = entries.map(({ statusCode, response }) => {
+    const body = buildResponseBody(registry, hintBase + statusCode + "Response", statusCode, response);
+    return {
+      ...body,
+      statusCode,
+      encodingSymbol: body.descriptor ? body.encoding : "none",
+      fromHExpr: body.descriptor ? buildFromHExpr(body.descriptor, "parsed") : "nil",
+    };
+  });
+  const label = "Runtime::Response";
+  return { label, descriptor: null, encoding: "json", mediaType: null, variants };
 }
 
 // Looks up a tag's own document-level description (schema.tags: [{name, description}]) for the
@@ -350,7 +387,12 @@ function buildDocLines(op, docParams, response) {
     const bracket = p.label ? `[${p.label}] ` : "";
     lines.push(p.description ? `@param ${p.name} ${bracket}${p.description}` : `@param ${p.name} [${p.label}]`);
   }
-  lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+  if (response.variants) {
+    const statuses = response.variants.map((v) => `${v.statusCode} (${v.descriptor ? v.label : "no body"})`).join(", ");
+    lines.push(`@return [${response.label}] status and body of one of: ${statuses}`);
+  } else {
+    lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+  }
   return lines;
 }
 
@@ -435,7 +477,7 @@ export function collectOperationsByTag(registry) {
           body,
           bodyWireExpr: body ? buildToWireExpr(body.descriptor, "body") : null,
           response,
-          hasResponse: !!response.descriptor,
+          hasResponse: !!response.descriptor || !!response.variants,
           responseFromHExpr: response.descriptor ? buildFromHExpr(response.descriptor, "parsed") : null,
           authLiteral,
         });

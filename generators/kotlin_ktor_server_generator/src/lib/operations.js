@@ -434,8 +434,10 @@ function buildRequestBody(registry, hintBase, requestBody) {
   if (picked.encoding === "text") {
     return { type: "String", required: requestBody.required === true, encoding: "text", hasValidate: false, mediaType: picked.mediaType };
   }
+  // A raw body reaches the handler as a BinaryBody (Binary.kt) wrapping the still-unread request,
+  // so each handler decides per operation whether to buffer it (bytes()) or stream it (channel()).
   if (picked.encoding === "bytes") {
-    return { type: "ByteArray", required: requestBody.required === true, encoding: "bytes", hasValidate: false, mediaType: picked.mediaType };
+    return { type: "BinaryBody", required: requestBody.required === true, encoding: "bytes", hasValidate: false, mediaType: picked.mediaType };
   }
 
   // urlencoded and multipart both go through ktType/registerObject the same way now: each becomes
@@ -463,37 +465,69 @@ function buildRequestBody(registry, hintBase, requestBody) {
   return result;
 }
 
-// Uses the engine's firstSuccessResponse() (see docs/javascript-api.md) instead of hand-rolling
-// the same "first declared 2xx, else default" pick every response-handling generator otherwise
-// needs. `application/json` gets a real generated data class type, sent via the generic
-// `call.respond(status, result)`; a single remaining "text/*" media type maps to a plain Kotlin
-// `String` (sent via `call.respondText`), and a single remaining other media type maps to a raw
-// `ByteArray` (sent via `call.respondBytes`) - both set the exact declared media type as the
-// response's Content-Type (see api_routes.kt.j2), same content-type-driven policy as
-// buildRequestBody. More than one remaining media type is still a loud error, not a guess (see
-// README "Known limitations").
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { type: "Unit", statusCode: 200, encoding: "json", mediaType: null };
-  const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
-  const content = picked.response.content || {};
-  if (Object.keys(content).length === 0) return { type: "Unit", statusCode, encoding: "json", mediaType: null };
+// Describes how one success response's body is written: `encoding` is "json" (a generated data
+// class, via call.respond), "text" (String, via call.respondText), "bytes" (BinaryContent, via
+// Binary.kt's respondBinary) or "none" (no body - type "Unit").
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
+  if (Object.keys(content).length === 0) return { type: "Unit", statusCode, encoding: "none", mediaType: null };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = ktType(registry, jsonContent.schema || {}, hintBase + "Response");
+    const t = ktType(registry, jsonContent.schema || {}, typeHint);
     return { type: t.type, statusCode, encoding: "json", mediaType: null };
   }
   const remaining = Object.keys(content);
   if (remaining.length === 1) {
     const mediaType = remaining[0];
     const encoding = isTextMediaType(mediaType) ? "text" : "bytes";
-    return { type: encoding === "text" ? "String" : "ByteArray", statusCode, encoding, mediaType };
+    return { type: encoding === "text" ? "String" : "BinaryContent", statusCode, encoding, mediaType };
   }
   throw Error(
-    `<e19a4b6d> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
-      `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as raw bytes) are ` +
+    `<e19a4b6d> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
+      `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as BinaryContent) are ` +
       `supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: Ktor's PartialContent plugin produces that 206 itself
+// from the 200's BinaryContent, so it's not a separate response the handler returns.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps the plain `suspend fun op(...): T` signature. Two or more (e.g.
+// 200 for a synchronous result, 202 for an accepted background job) become a sealed interface with
+// one nested StatusNNN class per status code, so the handler picks the status at runtime by which
+// one it returns.
+function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { type: "Unit", statusCode: 200, encoding: "none", mediaType: null, variants: null };
+    const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
+    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response), variants: null };
+  }
+  // Checked against model names too: the apis package star-imports the models package, and a
+  // same-named declaration in apis would shadow the model there.
+  let interfaceName = className(opName) + "Response";
+  let n = 2;
+  while (usedTypeNames.has(interfaceName) || registry.models.has(interfaceName)) interfaceName = className(opName) + "Response" + n++;
+  usedTypeNames.add(interfaceName);
+  const variants = entries.map(({ statusCode, response }) => ({
+    ...buildResponseBody(registry, hintBase + statusCode + "Response", parseInt(statusCode, 10), response),
+    className: "Status" + statusCode,
+    description: `The ${statusCode} response${response.description ? ": " + response.description : "."}`,
+  }));
+  return { type: interfaceName, statusCode: null, encoding: "variants", mediaType: null, variants };
 }
 
 // Looks up a tag's own document-level description (schema.tags: [{name, description}] - distinct
@@ -508,6 +542,9 @@ function tagDescription(tagName) {
 // Returns a Map<tag, { tagClass, description, operations: [...] }> in path-declaration order.
 export function collectOperationsByTag(registry) {
   const groups = new Map();
+  // Response variant interfaces are declared at package level in the apis package, shared by every
+  // tag.
+  const usedTypeNames = new Set(["BinaryBody", "BinaryContent"]);
   for (const op of collectOperations()) {
     // Ktor's server routing DSL has no Route.trace() builder - keep the same generated surface as
     // before rather than silently starting to emit trace operations now that collectOperations()
@@ -545,7 +582,7 @@ export function collectOperationsByTag(registry) {
         );
 
         const body = buildRequestBody(registry, hintBase, op.requestBody);
-        const response = buildResponse(registry, hintBase, op.responses);
+        const response = buildResponse(registry, hintBase, opName, op.responses, usedTypeNames);
         const { signatureParams, handlerArgs } = buildSignature([...allParams, ...authParams], body);
 
         if (!groups.has(tag)) groups.set(tag, { tagClass, description: tagDescription(tag), operations: [] });

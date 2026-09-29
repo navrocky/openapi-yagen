@@ -1,5 +1,7 @@
 package com.example.kitchensink.server.fakes
 
+import com.example.kitchensink.server.BinaryBody
+import com.example.kitchensink.server.BinaryContent
 import com.example.kitchensink.server.apis.PetsApiHandler
 import com.example.kitchensink.server.models.NewPet
 import com.example.kitchensink.server.models.Pet
@@ -85,8 +87,8 @@ class FakePetsApiHandler : PetsApiHandler {
         return "echo: $body"
     }
 
-    override suspend fun uploadPetAvatar(petId: String, body: ByteArray): ByteArray {
+    override suspend fun uploadPetAvatar(petId: String, body: BinaryBody): BinaryContent {
         pets[petId] ?: throw NotFoundException("pet $petId not found")
-        return body
+        return BinaryContent(body.bytes())
     }
 }

@@ -49,7 +49,7 @@ class FakePetsHandler
   end
 
   def upload_pet_avatar(pet_id:, body:)
-    body # echoes the raw bytes back
+    body.read # echoes the raw bytes back
   end
 
   def get_named_tag(pet_id:)
@@ -97,8 +97,60 @@ class FakeWidgetsHandler
   end
 end
 
+# Only ever reads/writes raw bodies.
+class FakeFilesHandler
+  include Kitchensink::FilesHandlerInterface
+
+  attr_reader :files
+
+  def initialize
+    @files = { "hello" => "hello, world".b }
+  end
+
+  def get_file(file_id:)
+    Kitchensink::Runtime::BinaryContent.new(data: @files.fetch(file_id), name: "#{file_id}.bin")
+  end
+
+  def put_file(file_id:, body:)
+    # Streamed through IO.copy_stream rather than read whole.
+    out = StringIO.new("".b)
+    IO.copy_stream(body, out)
+    @files[file_id] = out.string
+    nil
+  end
+
+  def echo_file(file_id:, body: nil)
+    body.nil? ? "empty" : body.read
+  end
+end
+
+class FakeJobsHandler
+  include Kitchensink::JobsHandlerInterface
+
+  def create_archive(sync: nil)
+    if sync
+      Kitchensink::Runtime::Response.new(status: 200, body: Kitchensink::Runtime::BinaryContent.new(data: "PKzip", name: "archive.zip"))
+    else
+      Kitchensink::Runtime::Response.new(status: 202, body: Kitchensink::Job.new(id: "job-1"))
+    end
+  end
+
+  def rebuild
+    Kitchensink::Runtime::Response.new(status: 204)
+  end
+
+  def ping
+    Kitchensink::Runtime::Response.new(status: 201) # undeclared - must not be sent as-is
+  end
+end
+
+FILES_HANDLER = FakeFilesHandler.new
+
 ROUTES.draw do
-  Kitchensink::Routes.draw(self, handlers: { pets: FakePetsHandler.new, widgets: FakeWidgetsHandler.new })
+  Kitchensink::Routes.draw(
+    self,
+    handlers: { pets: FakePetsHandler.new, widgets: FakeWidgetsHandler.new, files: FILES_HANDLER, jobs: FakeJobsHandler.new },
+  )
 end
 
 module RoutedApp

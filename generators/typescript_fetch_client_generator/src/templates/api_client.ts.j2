@@ -33,9 +33,19 @@ path: `{{ op.pathExpr }}`,
 {% endif %}{% if op.body.mediaType %}bodyContentType: "{{ op.body.mediaType }}",
 {% endif %}{% endif %}signal: options.signal,
 {% if op.authLiteral %}auth: {{ op.authLiteral }},
-{% endif %}{% if op.response.hasValidator %}validate: {{ op.response.validatorExpr }},
+{% endif %}{% if op.response.variants %}responses: {
+{% for v in op.response.variants %}  {{ v.statusCode }}: { encoding: "{{ v.encodingLiteral }}"{% if v.validatorExpr %}, validate: {{ v.validatorExpr }}{% endif %} },
+{% endfor %}},
+{% else %}{% if op.response.hasValidator %}validate: {{ op.response.validatorExpr }},
 {% endif %}{% if op.response.encoding != "json" %}responseEncoding: "{{ op.response.encoding }}",
-{% endif %}{% endfilter %}    });
+{% endif %}{% endif %}{% endfilter %}    });
   }
 {% endfor %}
 }
+{% for op in operations %}{% if op.response.variants %}
+
+/** One of `{{ tagClass }}.{{ op.name }}`'s success responses, told apart by `status`. */
+export type {{ op.response.aliasName }} =
+{% for v in op.response.variants %}{% if v.description %}{{ buildDocComment(v.description) | indent(2, true) }}
+{% endif %}  | { status: {{ v.statusCode }}{% if v.hasBody %}; body: {{ v.tsType }}{% endif %} }{% if loop.is_last %};{% endif %}
+{% endfor %}{% endif %}{% endfor %}

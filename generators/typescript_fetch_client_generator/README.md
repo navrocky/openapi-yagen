@@ -119,7 +119,8 @@ remaining media type, sent as text or raw bytes):
   `application/pdf`, `image/png`, ...): `options.body` is a raw `Uint8Array`, sent as-is with
   `Content-Type` set to the exact declared media type. The declared schema (`type: string, format:
   binary` or otherwise) has no bearing here - the wire content-type alone decides `string` vs.
-  `Uint8Array`, same as it does at runtime for a real client/server.
+  `Uint8Array`, same as it does at runtime for a real client/server. A wildcard declared media type
+  (e.g. `application/*`) is sent as `application/octet-stream`.
 
   A requestBody declaring two or more media types outside the three fixed ones above is ambiguous
   (which one would the generated method actually send?) and is a generator error, same as any other
@@ -187,6 +188,32 @@ try {
   }
 }
 ```
+
+### Multiple success responses
+
+A single success response resolves to the plain body, whatever `2xx` status actually arrives. An
+operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202` for
+an accepted background job) instead resolves to a discriminated union on `status`, parsed
+according to the actual response status:
+
+```ts
+// Generated (exported from index.ts):
+export type CreateBackupResponse =
+  | { status: 200; body: Uint8Array } // application/zip
+  | { status: 202; body: Operation }  // application/json
+  | { status: 204 };                  // a response without content
+
+// Usage:
+const response = await api.backups.createBackup({ sync: true });
+if (response.status === 200) {
+  saveArchive(response.body); // narrowed to Uint8Array
+} else if (response.status === 202) {
+  console.log(`backup job ${response.body.id} started`);
+}
+```
+
+Any other status - including a `2xx` the operation doesn't declare - throws `ApiError`. With
+`validateResponses=true`, each variant's body is checked against that status's declared type.
 
 ## oneOf/anyOf support
 

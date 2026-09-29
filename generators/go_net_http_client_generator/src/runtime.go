@@ -2,7 +2,10 @@ package client
 
 import (
 	"fmt"
+	"io"
+	"mime"
 	"mime/multipart"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -75,4 +78,47 @@ type ResponseError struct {
 
 func (e *ResponseError) Error() string {
 	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, string(e.Body))
+}
+
+// File is a raw (non-JSON, non-text) response body, still unread: stream it via Body, or call
+// Bytes() to read it whole. Either way the caller must consume it - Bytes() closes Body itself,
+// otherwise call Close() when done.
+type File struct {
+	// Body is the response body, read directly from the connection.
+	Body io.ReadCloser
+	// ContentType is the response's Content-Type header.
+	ContentType string
+	// ContentLength is the response's declared body length, or -1 if unknown.
+	ContentLength int64
+	// Name is the filename from a Content-Disposition response header, or "" if there is none.
+	Name string
+	// StatusCode is the actual response status (e.g. 206 for a partial Range response).
+	StatusCode int
+	// Header is the full set of response headers.
+	Header http.Header
+}
+
+// Bytes reads the whole remaining body into memory and closes it.
+func (f *File) Bytes() ([]byte, error) {
+	defer f.Body.Close()
+	return io.ReadAll(f.Body)
+}
+
+// Close closes the body without reading the rest of it.
+func (f *File) Close() error { return f.Body.Close() }
+
+func newFile(resp *http.Response) *File {
+	f := &File{
+		Body:          resp.Body,
+		ContentType:   resp.Header.Get("Content-Type"),
+		ContentLength: resp.ContentLength,
+		StatusCode:    resp.StatusCode,
+		Header:        resp.Header,
+	}
+	if disposition := resp.Header.Get("Content-Disposition"); disposition != "" {
+		if _, params, err := mime.ParseMediaType(disposition); err == nil {
+			f.Name = params["filename"]
+		}
+	}
+	return f
 }

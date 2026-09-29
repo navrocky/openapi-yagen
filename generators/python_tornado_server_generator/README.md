@@ -237,12 +237,62 @@ otherwise):
   method's `body:`/return type is a plain `str` - `self.request.body.decode("utf-8")` /
   `self.write(result)`, no JSON involved.
 - **a single other media type** (`application/octet-stream`, `application/zip`, `image/png`, ...):
-  the handler method's `body:`/return type is raw `bytes` - `self.request.body` /
-  `self.write(result)` directly, no encoding/decoding.
+  the handler method's `body:` is raw `bytes` (`self.request.body`, no decoding). Before the
+  handler runs, the request's `Content-Type` is checked against the declared media type (which may
+  be a wildcard like `application/*`) - a mismatch is answered with 415; a body sent without any
+  `Content-Type` is treated as `application/octet-stream` (RFC 9110). An empty body is `None` for an
+  optional requestBody and a 422 for a required one. The return type is `Union[bytes,
+  runtime.BinaryContent]` - return plain `bytes`, or a `BinaryContent` to add metadata:
+
+  ```python
+  from your_app.generated.runtime import BinaryContent
+
+  def download_backup(self, *, backup_id: str) -> Union[bytes, BinaryContent]:
+      data = self.storage.read(backup_id)
+      # Content-Disposition: attachment; filename="backup.tar"
+      return BinaryContent(data=data, name="backup.tar")
+  ```
+
+  `BinaryContent.content_type` overrides the declared media type (a declared wildcard such as
+  `application/*` is otherwise sent as `application/octet-stream`).
 
   A request/response body declaring two or more media types outside the ones above is ambiguous
   (which one would the generated handler actually expect?) and is a generator error, same as any
   other unsupported content-type - see "Known limitations".
+
+### Multiple success responses
+
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) returns one of a set of generated dataclasses - one per status
+code, plus a `Union` alias of them in the tag's api module - and the handler picks the status by
+which one it returns:
+
+```python
+# Generated (your_app/generated/apis/backups.py):
+@dataclass
+class CreateBackup200Response:
+    body: Union[bytes, runtime.BinaryContent]  # 200, application/zip
+
+@dataclass
+class CreateBackup202Response:
+    body: Operation  # 202, application/json
+
+@dataclass
+class CreateBackup204Response:
+    pass  # a response without content
+
+CreateBackupResponse = Union[CreateBackup200Response, CreateBackup202Response, CreateBackup204Response]
+
+# Implementation:
+def create_backup(self, *, sync: Optional[bool]) -> CreateBackupResponse:
+    if sync:
+        return CreateBackup200Response(body=BinaryContent(data=self.build_now(), name="backup.zip"))
+    return CreateBackup202Response(body=self.start_in_background())
+```
+
+Each variant's `body` follows the same media type rules as a single response. Returning anything
+else is answered with 500. An operation with a single success response keeps the plain `-> T`
+return type.
 
 ### Path/query/header/cookie parameters
 
@@ -255,6 +305,12 @@ scheme (`in: cookie` on the scheme itself, see "Authentication" below), which is
 already-correct code path.
 
 ## Known limitations (v1)
+
+- Raw request and response bodies are held in memory whole (Tornado buffers a request body before
+  the handler runs) - there's no streaming, and no `Range`/`206 Partial Content` support for raw
+  responses.
+- Only explicitly numbered `2xx` responses become separate response variants; a range (`2XX`) or
+  `default` response is used only when no numbered `2xx` response exists.
 
 - Request and response bodies support `application/json`, `multipart/form-data`, `application/
   x-www-form-urlencoded`, a single `text/*` media type (as `str`), and a single other media type

@@ -218,8 +218,12 @@ function buildRequestBody(registry, hintBase, requestBody) {
   if (picked.encoding === "text") {
     return { type: "string", required, pointer: !required, encoding: "text", mediaType: picked.mediaType, mediaTypeLiteral: toGoStringLiteral(picked.mediaType), fields: null };
   }
+  // A raw body is taken as an io.Reader and streamed as-is (bytes.NewReader for in-memory data) -
+  // nil means "absent" for an optional one, so it's never pointer-wrapped. A wildcard declared media
+  // type ("application/*") isn't a valid Content-Type, so it's sent as application/octet-stream.
   if (picked.encoding === "bytes") {
-    return { type: "[]byte", required, pointer: !required, encoding: "bytes", mediaType: picked.mediaType, mediaTypeLiteral: toGoStringLiteral(picked.mediaType), fields: null };
+    const wireMediaType = picked.mediaType.includes("*") ? "application/octet-stream" : picked.mediaType;
+    return { type: "io.Reader", required, pointer: false, encoding: "bytes", mediaType: wireMediaType, mediaTypeLiteral: toGoStringLiteral(wireMediaType), fields: null };
   }
   if (picked.encoding !== "json") requireFlatObjectSchema(registry, bodySchema, picked.mediaType);
   const t = goType(registry, bodySchema, hintBase + "Body");
@@ -248,29 +252,80 @@ function buildRequestBody(registry, hintBase, requestBody) {
   return { type: qualifyModelType(t.type), required, pointer: !required, encoding: picked.encoding, mediaType: null, mediaTypeLiteral: null, fields };
 }
 
-// Uses the engine's firstSuccessResponse() instead of hand-rolling the same "first declared 2xx,
-// else default" pick every response-handling generator otherwise needs. `application/json` gets a
-// real generated model type; a single remaining "text/*" media type maps to a plain Go string, and
-// a single remaining other media type maps to a raw []byte.
-function buildResponse(registry, hintBase, responses) {
-  const picked = firstSuccessResponse(responses || {});
-  if (!picked) return { type: null, statusCode: 200 };
-  const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
-  const content = picked.response.content || {};
-  if (Object.keys(content).length === 0) return { type: null, statusCode };
+// Describes how one success response's body is decoded: `kind` is "json" (a generated model type),
+// "text" (string), "file" (*File - the body left open for the caller to stream or read) or "none"
+// (no body, type null).
+function buildResponseBody(registry, typeHint, statusCode, response) {
+  const content = response.content || {};
+  if (Object.keys(content).length === 0) return { type: null, kind: "none", statusCode };
   const jsonContent = content[JSON_MEDIA_TYPE];
   if (jsonContent) {
-    const t = goType(registry, jsonContent.schema || {}, hintBase + "Response");
-    return { type: qualifyModelType(t.type), statusCode };
+    const t = goType(registry, jsonContent.schema || {}, typeHint);
+    return { type: qualifyModelType(t.type), kind: "json", statusCode };
   }
   const remaining = Object.keys(content);
   if (remaining.length === 1) {
-    return { type: isTextMediaType(remaining[0]) ? "string" : "[]byte", statusCode };
+    return isTextMediaType(remaining[0]) ? { type: "string", kind: "text", statusCode } : { type: FILE_TYPE, kind: "file", statusCode };
   }
   throw Error(
-    `<2d5f8a4c> Unsupported response content-type(s) [${remaining.join(", ")}] for the success response - only ` +
-      `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as []byte) are supported`
+    `<2d5f8a4c> Unsupported response content-type(s) [${remaining.join(", ")}] for the ${statusCode} response - only ` +
+      `"${JSON_MEDIA_TYPE}", a single "text/*" media type, or a single other media type (as *File) are supported`
   );
+}
+
+// Every explicitly numbered 2xx response, in ascending status code order - except a 206 whose
+// single media type matches a raw 200's: that's the same body answering a Range request, decoded
+// the same way as the 200, not a separate response variant.
+function successResponseEntries(responses) {
+  const codes = Object.keys(responses)
+    .filter((code) => /^2\d\d$/.test(code))
+    .sort();
+  const mediaTypesOf = (code) => Object.keys((responses[code] && responses[code].content) || {});
+  const ok = mediaTypesOf("200");
+  const partial = mediaTypesOf("206");
+  const partialIsRange =
+    codes.includes("206") && ok.length === 1 && partial.length === 1 && ok[0] === partial[0] && ok[0] !== JSON_MEDIA_TYPE && !isTextMediaType(ok[0]);
+  return codes.filter((code) => !(code === "206" && partialIsRange)).map((code) => ({ statusCode: code, response: responses[code] }));
+}
+
+// A single success response keeps the plain `(T, error)` method signature (decoded regardless of
+// which 2xx status arrived). Two or more become a sealed interface with one struct per status code,
+// picked by the actual response status.
+function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
+  const entries = successResponseEntries(responses || {});
+  if (entries.length < 2) {
+    const picked = entries[0] || firstSuccessResponse(responses || {});
+    if (!picked) return { type: null, kind: "none", statusCode: 200, variants: null, keepsBody: false };
+    const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
+    const body = buildResponseBody(registry, hintBase + "Response", statusCode, picked.response);
+    return { ...body, variants: null, keepsBody: body.kind === "file" };
+  }
+  const interfaceName = uniqueTypeName(opName + "Response", usedTypeNames);
+  const variants = entries.map(({ statusCode, response }) => {
+    const variantTypeName = uniqueTypeName(opName + statusCode + "Response", usedTypeNames);
+    const summary = `${variantTypeName} is the ${statusCode} response${response.description ? ": " + response.description : "."}`;
+    return {
+      ...buildResponseBody(registry, hintBase + statusCode + "Response", parseInt(statusCode, 10), response),
+      typeName: variantTypeName,
+      docComment: buildDocComment(summary, null, [], "//"),
+    };
+  });
+  return {
+    type: interfaceName,
+    kind: "variants",
+    statusCode: null,
+    markerMethod: "is" + interfaceName,
+    variants,
+    keepsBody: variants.some((v) => v.kind === "file"),
+  };
+}
+
+function uniqueTypeName(base, usedTypeNames) {
+  let name = base;
+  let n = 2;
+  while (usedTypeNames.has(name)) name = base + n++;
+  usedTypeNames.add(name);
+  return name;
 }
 
 // Looks up a tag's own document-level description (schema.tags: [{name, description}] - distinct
@@ -297,8 +352,16 @@ function baseGoType(t) {
   }
 }
 
+// Types declared by client/runtime.go itself (or the standard library), not the models package.
+const FILE_TYPE = "*File";
+const NON_MODEL_TYPES = new Set([FILE_TYPE, "io.Reader"]);
+
+// Names already declared at package level in client/runtime.go and client/ApiClient.go - a
+// generated response variant type must never reuse one.
+const RUNTIME_DECLARED_NAMES = ["File", "ResponseError", "ApiClient", "NewApiClient"];
+
 function isModelType(t) {
-  return !!t && !BUILTIN_TYPES.has(baseGoType(t));
+  return !!t && !NON_MODEL_TYPES.has(t) && !BUILTIN_TYPES.has(baseGoType(t));
 }
 
 // Prefixes a model-registry type name with "models." wherever it's printed in the client/server
@@ -318,13 +381,17 @@ function qualifyModelType(t) {
 // can't just import everything unconditionally.
 export function computeImportFlags(operations) {
   const flags = { json: false, bytesPkg: false, strings: false, multipart: false, models: false, time: false, urlPkg: false };
+  const noteResponseBody = (r) => {
+    if (r.type) noteType(r.type);
+    if (r.kind === "json") flags.json = true;
+  };
   const noteType = (t) => {
     if (isModelType(t)) flags.models = true;
     if (baseGoType(t) === "time.Time") flags.time = true;
   };
   for (const op of operations) {
-    if (op.response.type) noteType(op.response.type);
-    if (op.response.type && op.response.type !== "string" && op.response.type !== "[]byte") flags.json = true;
+    if (op.response.variants) op.response.variants.forEach(noteResponseBody);
+    else noteResponseBody(op.response);
     if (op.queryParams.length > 0) flags.urlPkg = true;
     if (op.queryParams.some((p) => p.arraySeparator)) flags.strings = true;
     for (const p of [...op.pathParams, ...op.queryParams, ...op.headerParams, ...op.cookieParams]) noteType(p.itemType || p.type);
@@ -341,8 +408,6 @@ export function computeImportFlags(operations) {
         flags.bytesPkg = true;
       } else if (op.body.encoding === "text") {
         flags.strings = true;
-      } else if (op.body.encoding === "bytes") {
-        flags.bytesPkg = true;
       }
       for (const f of op.body.fields || []) noteType(f.type);
     }
@@ -368,6 +433,9 @@ function disambiguateOperationName(base, method, usedNames) {
 export function collectOperationsByTag(registry) {
   const groups = new Map();
   const usedNamesByTag = new Map();
+  // Package-level type names generated into package client (response variant types) - unlike
+  // method names, these share one namespace across every tag.
+  const usedTypeNames = new Set(RUNTIME_DECLARED_NAMES);
   for (const op of collectOperations()) {
     withResilience(
       `operation ${op.method.toUpperCase()} ${op.path}`,
@@ -387,7 +455,7 @@ export function collectOperationsByTag(registry) {
         const cookieParams = allParams.filter((p) => p.in === "cookie");
 
         const body = buildRequestBody(registry, hintBase, op.requestBody);
-        const response = buildResponse(registry, hintBase, op.responses);
+        const response = buildResponse(registry, hintBase, opName, op.responses, usedTypeNames);
         const signature = buildSignature(allParams, body);
 
         if (!groups.has(tag)) groups.set(tag, { tagType, description: tagDescription(tag), operations: [] });

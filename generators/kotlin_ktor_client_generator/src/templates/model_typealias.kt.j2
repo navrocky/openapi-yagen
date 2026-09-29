@@ -1,5 +1,5 @@
 package {{ modelsPackage }}
 
-{% if model.description %}/** {{ model.description }} */
+{% if model.description %}{{ buildDocComment(model.description) }}
 {% endif -%}
 typealias {{ model.name }} = {{ model.targetType }}

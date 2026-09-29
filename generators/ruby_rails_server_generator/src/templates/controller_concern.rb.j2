@@ -8,17 +8,15 @@ module {{ moduleName }}
     included do
       rescue_from Runtime::ValidationError, with: :render_openapi_validation_error
       rescue_from Runtime::MissingAuthenticationError, with: :render_openapi_missing_authentication_error
+      rescue_from Runtime::UnsupportedMediaTypeError, with: :render_openapi_unsupported_media_type_error
     end
 {% for op in group.operations %}
     def {{ op.name }}
 {% for stmt in op.statements %}      {{ stmt }}
 {% endfor %}{% if op.bodyStatements %}{% for stmt in op.bodyStatements %}      {{ stmt }}
 {% endfor %}{% endif %}      result = on_{{ op.name }}({% for k in op.handlerKwargs %}{{ k.rubyName }}: {{ k.rubyName }}{% if not loop.is_last %}, {% endif %}{% endfor %})
-{% if not op.response.descriptor %}      head {{ op.response.statusCode }}
-{% else %}{% if op.response.encoding == "json" %}      render json: {{ op.responseWireExpr }}, status: {{ op.response.statusCode }}
-{% else %}      render body: {{ op.responseWireExpr }}, status: {{ op.response.statusCode }}
-{% if op.response.mediaType %}      response.headers["Content-Type"] = {{ toStringLiteral(op.response.mediaType) }}
-{% endif %}{% endif %}{% endif %}    end
+{% for stmt in op.responseStatements %}      {{ stmt }}
+{% endfor %}    end
 {% endfor %}
 {% for op in group.operations %}
 {% for line in op.docLines %}    # {{ line }}
@@ -34,6 +32,10 @@ module {{ moduleName }}
 
     def render_openapi_missing_authentication_error(e)
       render json: { error: e.message }, status: :unauthorized
+    end
+
+    def render_openapi_unsupported_media_type_error(e)
+      render json: { error: e.message }, status: :unsupported_media_type
     end
   end
 end

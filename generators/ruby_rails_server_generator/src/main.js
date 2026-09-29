@@ -3,7 +3,7 @@ import { collectOperationsByTag } from "./lib/operations.js";
 
 const moduleName = vars.moduleName;
 const moduleSnake = toSnakeCase(moduleName);
-// See AGENTS.md's "a generator for a dynamically-typed target language must generate its own
+// See docs/develop/generator-conventions.md's "a generator for a dynamically-typed target language must generate its own
 // runtime checks" convention - Ruby has no compiler to reject a wrong-shaped value the way the
 // TypeScript/Kotlin generators' static types do, so this generator's substitute (a type check
 // plus generated constraint validation, see lib/serialization.js's buildValidateStatements and

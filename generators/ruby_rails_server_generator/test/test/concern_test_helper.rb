@@ -44,7 +44,7 @@ class PetsController < ActionController::API
   end
 
   def on_upload_pet_avatar(pet_id:, body:)
-    body
+    body.read
   end
 
   def on_get_named_tag(pet_id:)
@@ -65,6 +65,41 @@ class PetsController < ActionController::API
 
   def on_subscribe_to_pet(pet_id:, body:)
     nil
+  end
+end
+
+class FilesController < ActionController::API
+  include KitchensinkConcern::FilesController
+
+  def on_get_file(file_id:)
+    KitchensinkConcern::Runtime::BinaryContent.new(data: "hello, world", name: "#{file_id}.bin")
+  end
+
+  def on_put_file(file_id:, body:)
+    body.read
+    nil
+  end
+
+  def on_echo_file(file_id:, body: nil)
+    body.nil? ? "empty" : body.read
+  end
+end
+
+class JobsController < ActionController::API
+  include KitchensinkConcern::JobsController
+
+  def on_create_archive(sync: nil)
+    return KitchensinkConcern::Runtime::Response.new(status: 200, body: "PKzip") if sync
+
+    KitchensinkConcern::Runtime::Response.new(status: 202, body: KitchensinkConcern::Job.new(id: "job-1"))
+  end
+
+  def on_rebuild
+    KitchensinkConcern::Runtime::Response.new(status: 204)
+  end
+
+  def on_ping
+    KitchensinkConcern::Runtime::Response.new(status: 200)
   end
 end
 

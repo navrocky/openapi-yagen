@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime
 import json
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, cast
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union, cast
 
 from tornado.routing import URLSpec
 from tornado.web import HTTPError
@@ -14,6 +15,19 @@ from .. import runtime
 from ..models import *
 from ..runtime import MissingAuthenticationError, ValidationError
 
+{% for path in paths %}{% for op in path.operations %}{% if op.response.variants %}{% for v in op.response.variants %}
+
+@dataclass
+class {{ v.className }}:
+    """{{ v.description }}"""
+{% if v.encoding != "none" %}
+    body: {{ v.type }}
+{% endif %}{% endfor %}
+
+
+{{ op.response.type }} = Union[{% for v in op.response.variants %}{{ v.className }}{% if not loop.is_last %}, {% endif %}{% endfor %}]
+"""One of {{ tagClass }}.{{ op.name }}'s success responses - the returned class picks the response status."""
+{% endif %}{% endfor %}{% endfor %}
 
 class {{ tagClass }}(ABC):
 {% if description %}    """{{ description }}"""

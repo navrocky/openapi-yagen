@@ -2,11 +2,24 @@
 package {{ apisPackage }}
 
 {% if referencedModels %}import {{ modelsPackage }}.*
+{% endif %}import {{ packageName }}.*
 
-{% endif %}{{ docComment(tagDescription) }}interface {{ tagClass }}Handler {
+{{ docComment(tagDescription) }}interface {{ tagClass }}Handler {
 {% for op in operations -%}
 {% if op.docComment %}    {{ op.docComment | indent(4) }}
 {% endif %}    suspend fun {{ op.name }}({{ op.signatureParams }}){% if op.returnsValue %}: {{ op.response.type }}{% endif %}
 
 {% endfor -%}
 }
+{% for op in operations %}{% if op.response.variants %}
+
+/**
+ * One of [{{ tagClass }}Handler.{{ op.name }}]'s success responses - the returned subclass picks the
+ * response status.
+ */
+sealed interface {{ op.response.type }} {
+{% for v in op.response.variants %}{{ buildDocComment(v.description) | indent(4, true) }}
+{% if v.encoding == "none" %}    object {{ v.className }} : {{ op.response.type }}
+{% else %}    class {{ v.className }}(val body: {{ v.type }}) : {{ op.response.type }}
+{% endif %}{% endfor %}}
+{% endif %}{% endfor %}

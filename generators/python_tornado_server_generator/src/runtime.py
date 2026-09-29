@@ -1,17 +1,17 @@
-"""Shared runtime for generated Tornado server code - copied into the output package verbatim (no
-per-spec substitution needed, same as ruby_faraday_client_generator's runtime.rb). Every generated
-RequestHandler and model calls into this module instead of duplicating parameter-parsing/
-constraint-checking logic per operation/model.
+"""Shared runtime for the generated Tornado server code. Every generated RequestHandler and model
+calls into this module instead of duplicating parameter-parsing/constraint-checking logic per
+operation/model.
 
-Part of this generator's answer to AGENTS.md's "a generator for a dynamically-typed target language
-must generate its own runtime checks" convention: Python has no compiler to reject a wrong-shaped or
-out-of-spec value the way the Kotlin/TypeScript generators' static types do for free.
+Values are type- and constraint-checked at runtime here, since Python has no compiler to reject a
+wrong-shaped or out-of-spec value.
 """
 
 from __future__ import annotations
 
 import datetime
-from typing import Any, Dict
+from dataclasses import dataclass
+from email.message import Message
+from typing import Any, Dict, Optional
 
 
 def field(d: Dict[str, Any], key: str) -> Any:
@@ -199,10 +199,8 @@ def _normalize_z_suffix(value: str) -> str:
     return value[:-1] + "+00:00" if value.endswith("Z") else value
 
 
-# `field` is omitted here (unlike parse_date_param/parse_datetime_param below) to match the
-# generated enum from_wire's own unlabeled "invalid <Name> value" message (see models.py.j2) -
-# buildFromWireExpr (serialization.js) has no per-field label to thread through at body-property
-# position, only scalarParamType (operations.js) does, for a path/query/header parameter.
+# Unlike parse_date_param/parse_datetime_param below, the error names no field: this is used for
+# body properties, whose messages (like an enum's "invalid <Name> value") carry no per-field label.
 def parse_date(value: str) -> datetime.date:
     try:
         return datetime.date.fromisoformat(value)
@@ -229,3 +227,65 @@ def parse_datetime_param(value: str, field: str) -> datetime.datetime:
         return datetime.datetime.fromisoformat(_normalize_z_suffix(value))
     except (TypeError, ValueError):
         raise ValidationError('"{}" must be a valid date-time (ISO 8601), got {!r}'.format(field, value))
+
+
+class UnsupportedMediaTypeError(Exception):
+    """Raised when a raw request body's Content-Type doesn't match the media type the operation
+    declares - the generated route answers it with 415."""
+
+
+def _media_type(value: str) -> str:
+    return value.split(";", 1)[0].strip().lower()
+
+
+def _media_type_matches(declared: str, actual: str) -> bool:
+    if declared == "*/*":
+        return True
+    if declared.endswith("/*"):
+        return actual.startswith(declared[:-1])
+    return declared == actual
+
+
+def read_binary_body(content_type: Optional[str], body: bytes, declared_media_type: str, required: bool) -> Optional[bytes]:
+    """Checks a raw (non-JSON/form/text) request body against the operation's declared media type.
+    A body sent without a Content-Type is treated as application/octet-stream (RFC 9110 section
+    8.3). An empty body is None for an optional requestBody, a ValidationError for a required one."""
+    if not body:
+        if required:
+            raise ValidationError("request body is required")
+        return None
+    actual = _media_type(content_type) if content_type else "application/octet-stream"
+    if not _media_type_matches(_media_type(declared_media_type), actual):
+        raise UnsupportedMediaTypeError(f"unsupported Content-Type {content_type!r}, expected {declared_media_type!r}")
+    return body
+
+
+@dataclass
+class BinaryContent:
+    """A raw (non-JSON, non-text) response body with optional metadata - return plain bytes instead
+    when there's none to add."""
+
+    data: bytes
+    #: If set, sent as Content-Disposition: attachment; filename="name".
+    name: Optional[str] = None
+    #: Overrides the media type the operation declares for this response.
+    content_type: Optional[str] = None
+
+
+def _content_disposition(name: str) -> str:
+    message = Message()
+    message["Content-Disposition"] = "attachment"
+    message.set_param("filename", name, header="Content-Disposition")
+    return str(message["Content-Disposition"])
+
+
+def write_binary(handler: Any, declared_media_type: str, value: Any) -> None:
+    """Writes a raw response body (bytes or BinaryContent) through a tornado RequestHandler. A
+    declared wildcard media type (e.g. "application/*") is sent as application/octet-stream unless
+    BinaryContent.content_type overrides it."""
+    content = value if isinstance(value, BinaryContent) else BinaryContent(data=value)
+    content_type = content.content_type or ("application/octet-stream" if "*" in declared_media_type else declared_media_type)
+    handler.set_header("Content-Type", content_type)
+    if content.name:
+        handler.set_header("Content-Disposition", _content_disposition(content.name))
+    handler.write(content.data)

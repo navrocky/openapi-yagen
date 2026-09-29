@@ -22,7 +22,12 @@ module {{ moduleName }}
 end
 
 module {{ moduleName }}::Runtime
-  # Raised whenever a response status is not in the 2xx range.
+  # Returned by an operation declaring two or more success responses: the actual response status,
+  # and the body decoded as that status declares (nil for a response without content).
+  Response = Struct.new(:status, :body, keyword_init: true)
+
+  # Raised whenever a response status is not in the 2xx range - or, for an operation declaring
+  # several success responses, isn't one of them.
   class ApiError < StandardError
     attr_reader :status, :response_body
 
@@ -251,8 +256,13 @@ module {{ moduleName }}::Runtime
   #   :bytes          - the raw response text, forced to ASCII-8BIT (binary) encoding so it isn't
   #                      silently mangled as if it were text in whatever encoding the response
   #                      happened to declare (or Ruby's default, absent that).
+  #
+  # `responses:` (only for an operation declaring two or more success responses) maps each declared
+  # status code to its encoding (:json/:text/:bytes, or :none for a response without content) - it
+  # supersedes `response_encoding:`, any other status (including an undeclared 2xx) raises
+  # ApiError, and the return value becomes `[status, parsed]` instead of just `parsed`.
   def request(connection:, method:, path:, query: nil, headers: nil, cookies: nil, body: nil, content_type: :json,
-              media_type: nil, response_encoding: :json, auth: nil, auth_config: nil)
+              media_type: nil, response_encoding: :json, responses: nil, auth: nil, auth_config: nil)
     # Faraday's own default params encoder (NestedParamsEncoder) collapses a repeated bare key
     # (e.g. "tags=a&tags=b", the wire format build_query below produces for an exploded array
     # query parameter) down to just its last value the moment req.url(full_path) re-decodes it -
@@ -292,6 +302,10 @@ module {{ moduleName }}::Runtime
 
     response = connection.run_request(method, full_path, request_body, resolved_headers)
     ok = response.status >= 200 && response.status < 300
+    if responses
+      ok &&= responses.key?(response.status)
+      response_encoding = responses[response.status] if ok
+    end
 
     text = response.body.to_s
     parsed =
@@ -310,6 +324,8 @@ module {{ moduleName }}::Runtime
       end
 
     raise ApiError.new(response.status, parsed) unless ok
+    return [response.status, response_encoding == :none ? nil : parsed] if responses
+
     parsed
   end
 end

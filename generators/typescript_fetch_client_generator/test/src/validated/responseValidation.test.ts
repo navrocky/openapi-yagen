@@ -54,3 +54,12 @@ test("exported guard functions are directly usable outside the client (e.g. narr
   assert.ok(isPet(value));
   assert.equal(isPet({ id: "nope" }), false);
 });
+
+test("a multi-response variant's body is validated against that status's declared type", async () => {
+  const { JobsClient } = await import("../../generated-validated/apis/JobsClient.js");
+  const { fetch } = createFetchStub(() => ({ status: 202, body: { notAnId: true } }));
+  await assert.rejects(
+    new JobsClient({ baseUrl: "https://example.test", fetch }).createArchive(),
+    (e: unknown) => e instanceof ResponseValidationError
+  );
+});

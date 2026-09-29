@@ -25,6 +25,16 @@ func New{{ tagType }}(httpClient *http.Client, baseURL string) *{{ tagType }} {
 	return &{{ tagType }}{httpClient: httpClient, baseURL: baseURL}
 }
 
+{% macro wrap(variantType, expr) %}{% if variantType != "" %}{{ variantType }}{Body: {{ expr }}}{% else %}{{ expr }}{% endif %}{% endmacro %}{% macro decodeResponse(kind, type, variantType) %}{% if kind == "text" %}yagenRespBody, err := io.ReadAll(yagenResp.Body)
+if err != nil {
+	return yagenZero, err
+}
+return {{ wrap(variantType, "string(yagenRespBody)") }}, nil{% else if kind == "file" %}yagenKeepBody = true
+return {{ wrap(variantType, "newFile(yagenResp)") }}, nil{% else if kind == "json" %}var yagenResult {{ type }}
+if err := json.NewDecoder(yagenResp.Body).Decode(&yagenResult); err != nil {
+	return yagenZero, err
+}
+return {{ wrap(variantType, "yagenResult") }}, nil{% else %}return {{ variantType }}{}, nil{% endif %}{% endmacro %}
 {% for op in operations %}
 {% if op.docComment %}{{ op.docComment }}
 {% endif %}func (c *{{ tagType }}) {{ op.name }}({{ op.signature }}) ({% if op.returnsValue %}{{ op.response.type }}, {% endif %}error) {
@@ -95,12 +105,8 @@ func New{{ tagType }}(httpClient *http.Client, baseURL string) *{{ tagType }} {
 		yagenBodyReader = strings.NewReader(*body)
 	}
 {% else %}	yagenBodyReader := strings.NewReader(body)
-{% endif %}{% else %}{% if op.body.pointer %}	var yagenBodyReader io.Reader
-	if body != nil {
-		yagenBodyReader = bytes.NewReader(*body)
-	}
-{% else %}	yagenBodyReader := bytes.NewReader(body)
-{% endif %}{% endif %}
+{% endif %}{% else %}	yagenBodyReader := body
+{% endif %}
 	yagenHTTPReq, err := http.NewRequestWithContext(ctx, {{ toStringLiteral(op.method) }}, yagenReqURL, yagenBodyReader)
 	if err != nil {
 		return {% if op.returnsValue %}yagenZero, {% endif %}err
@@ -127,28 +133,42 @@ func New{{ tagType }}(httpClient *http.Client, baseURL string) *{{ tagType }} {
 	if err != nil {
 		return {% if op.returnsValue %}yagenZero, {% endif %}err
 	}
-	defer yagenResp.Body.Close()
-
+{% if op.response.keepsBody %}	// A *File result hands the still-open body to the caller, who closes it.
+	yagenKeepBody := false
+	defer func() {
+		if !yagenKeepBody {
+			yagenResp.Body.Close()
+		}
+	}()
+{% else %}	defer yagenResp.Body.Close()
+{% endif %}
 	if yagenResp.StatusCode >= 400 {
 		yagenRespBody, _ := io.ReadAll(yagenResp.Body)
 		return {% if op.returnsValue %}yagenZero, {% endif %}&ResponseError{StatusCode: yagenResp.StatusCode, Body: yagenRespBody}
 	}
 
-{% if op.returnsValue %}{% if op.response.type == "string" %}	yagenRespBody, err := io.ReadAll(yagenResp.Body)
-	if err != nil {
-		return yagenZero, err
+{% if op.response.variants %}	switch yagenResp.StatusCode {
+{% for v in op.response.variants %}	case {{ v.statusCode }}:
+{{ decodeResponse(v.kind, v.type, v.typeName) | indent("\t\t", true) }}
+{% endfor %}	default:
+		yagenRespBody, _ := io.ReadAll(yagenResp.Body)
+		return yagenZero, &ResponseError{StatusCode: yagenResp.StatusCode, Body: yagenRespBody}
 	}
-	return string(yagenRespBody), nil
-{% else if op.response.type == "[]byte" %}	yagenRespBody, err := io.ReadAll(yagenResp.Body)
-	if err != nil {
-		return yagenZero, err
-	}
-	return yagenRespBody, nil
-{% else %}	var yagenResult {{ op.response.type }}
-	if err := json.NewDecoder(yagenResp.Body).Decode(&yagenResult); err != nil {
-		return yagenZero, err
-	}
-	return yagenResult, nil
-{% endif %}{% else %}	return nil
+{% else if op.returnsValue %}{{ decodeResponse(op.response.kind, op.response.type, "") | indent("\t", true) }}
+{% else %}	return nil
 {% endif %}}
 {% endfor %}
+{% for op in operations %}{% if op.response.variants %}
+// {{ op.response.type }} is one of {{ op.name }}'s success responses, picked by the response status:
+{% for v in op.response.variants %}// {{ v.typeName }} ({{ v.statusCode }}){% if not loop.is_last %},{% else %}.{% endif %}
+{% endfor %}type {{ op.response.type }} interface {
+	{{ op.response.markerMethod }}()
+}
+{% for v in op.response.variants %}
+{{ v.docComment }}
+type {{ v.typeName }} struct{% if v.type %} {
+	Body {{ v.type }}
+}{% else %}{}{% endif %}
+
+func ({{ v.typeName }}) {{ op.response.markerMethod }}() {}
+{% endfor %}{% endif %}{% endfor %}

@@ -94,6 +94,8 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation("io.ktor:ktor-server-test-host:$ktorVersion")
+                implementation("io.ktor:ktor-server-partial-content:$ktorVersion")
+                implementation("io.ktor:ktor-server-conditional-headers:$ktorVersion")
                 implementation(kotlin("test"))
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.0.21")
                 implementation(platform("org.junit:junit-bom:5.11.3"))

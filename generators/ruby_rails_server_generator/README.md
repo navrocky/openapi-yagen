@@ -196,9 +196,11 @@ Both a request-validation failure and a constraint violation map to a single err
 - regardless of whether it surfaced while parsing a parameter, decoding the request body, or
 serializing your handler's return value; the generated controller's `rescue_from` maps it to
 `422 Unprocessable Content`. A missing/invalid authentication credential is a distinct class,
-`Runtime::MissingAuthenticationError`, mapped to `401 Unauthorized`. Both default response bodies
-are `{"error": "<message>"}` - override
-`render_openapi_validation_error`/`render_openapi_missing_authentication_error` in your own
+`Runtime::MissingAuthenticationError`, mapped to `401 Unauthorized`, and a raw request body with
+the wrong `Content-Type` is `Runtime::UnsupportedMediaTypeError`, mapped to `415 Unsupported Media
+Type`. All default response bodies are `{"error": "<message>"}` - override
+`render_openapi_validation_error`/`render_openapi_missing_authentication_error`/
+`render_openapi_unsupported_media_type_error` in your own
 `baseController` to change the shape, or to add logging/request-id correlation.
 
 ### Regenerating during development
@@ -210,12 +212,74 @@ whenever the spec changes.
 ## Request body content types
 
 Priority order: `application/json` > `multipart/form-data` > `application/x-www-form-urlencoded` >
-a single remaining media type (as a plain `String`, read via `request.raw_post`). Unlike a JSON
+a single remaining media type (`text/*` as a plain `String` read via `request.raw_post`; anything
+else as a raw body - see "Raw request and response bodies" below). Unlike a JSON
 body (where `JSON.parse` already hands back a real `Integer`/`Float`/`true`/`false`), a
 multipart/urlencoded form field's `type: integer`/`number`/`boolean`/`format: date`/`date-time`
 property is parsed from its raw wire String the same way a query parameter is (see "Parameters"
 below) before your model's own `from_h` ever sees it - both content types restrict form fields to
 a flat object (scalar/enum properties, or arrays of either).
+
+## Raw request and response bodies
+
+A raw (non-JSON/form/text) request body - `application/octet-stream`, `application/zip`,
+`image/png`, ... - reaches your handler as `body:` = the request body **IO**, still unread and
+rewound, so each handler decides whether to read it whole or stream it:
+
+```ruby
+def upload_pet_avatar(pet_id:, body:)
+  Avatar.store(pet_id, body.read)             # small payload: read it whole
+end
+
+def restore_backup(body:)
+  File.open(tmp_path, "wb") { |f| IO.copy_stream(body, f) } # large payload: stream it
+end
+```
+
+Before the handler runs, the request's `Content-Type` is checked against the declared media type
+(which may be a wildcard like `application/*`) - a mismatch raises `Runtime::UnsupportedMediaTypeError`
+(415). A body sent without any `Content-Type` is treated as `application/octet-stream` (RFC 9110).
+An empty body is `nil` for an optional requestBody and a `Runtime::ValidationError` (422) for a
+required one.
+
+A raw response is either a plain binary `String`, or a `Runtime::BinaryContent` to add metadata or
+send a file from disk without reading it into memory:
+
+```ruby
+def download_backup(backup_id:)
+  PetStore::Runtime::BinaryContent.new(path: backup_path(backup_id), name: "backup.tar") # send_file
+end
+
+def export_pets
+  PetStore::Runtime::BinaryContent.new(data: build_csv_zip, name: "pets.zip") # send_data
+end
+```
+
+`name` becomes `Content-Disposition: attachment; filename="..."`; `content_type` overrides the
+declared media type (a declared wildcard such as `application/*` is otherwise sent as
+`application/octet-stream`).
+
+## Multiple success responses
+
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) expects its handler to return a `Runtime::Response` (namespaced
+under your `moduleName`) with the `status` to respond with and its `body` - rendered according to
+what that status declares (a model for JSON, a `String`/`BinaryContent` for a raw body, nothing for
+a response without content):
+
+```ruby
+def create_backup(sync: nil)
+  if sync
+    PetStore::Runtime::Response.new(status: 200, body: PetStore::Runtime::BinaryContent.new(data: build_now, name: "backup.zip"))
+  else
+    PetStore::Runtime::Response.new(status: 202, body: start_in_background) # a PetStore::Operation
+  end
+end
+```
+
+Returning anything other than a `Runtime::Response` raises `TypeError`, and a status the operation
+doesn't declare raises `ArgumentError` - both handler bugs, surfacing as a 500. An operation with a
+single success response keeps returning its plain body.
 
 ## Parameters
 
@@ -323,6 +387,12 @@ filtering, and conversion to this generator's OpenAPI 3.2) - and generates an
 picks up the new route automatically, in both `controllerMode`s.
 
 ## Known limitations (v1)
+
+- Raw responses support no `Range`/`206 Partial Content` handling of their own (a `path:`
+  `BinaryContent` goes through Rails' `send_file`, so `Rack::Sendfile`/an `X-Sendfile`-capable
+  front server can take over there).
+- Only explicitly numbered `2xx` responses become separate response statuses; a range (`2XX`) or
+  `default` response is used only when no numbered `2xx` response exists.
 
 - Nothing enforces the `PetsController`-style naming convention `controllerMode=concern` relies
   on at generation time - naming your own controller class anything other than what the tag's

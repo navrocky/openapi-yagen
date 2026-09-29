@@ -117,7 +117,8 @@ argument** (an instance of the schema's generated model class) - only the wire e
   `text/plain`). A response declaring the same kind of media type comes back as a plain `String`
   too, not JSON-parsed. The declared schema (`type: string, format: binary` or otherwise) has no
   bearing here - the wire content-type alone decides this, same as it does at runtime for a real
-  client/server.
+  client/server. A wildcard declared media type (e.g. `application/*`) is sent as
+  `application/octet-stream`.
 
   A requestBody/response declaring two or more media types outside the fixed ones above is
   ambiguous (which one would the generated method actually send/expect?) and is a generator error,
@@ -237,6 +238,24 @@ rescue PetStore::Runtime::ApiError => e
   # handle not-found
 end
 ```
+
+### Multiple success responses
+
+A single success response returns the plain decoded body, whatever `2xx` status actually arrives.
+An operation declaring two or more `2xx` responses (e.g. `200` for a synchronous result and `202`
+for an accepted background job) instead returns a `Runtime::Response` (namespaced under your
+`moduleName`) with `#status` and `#body` - the body decoded as that status declares (a model
+instance for JSON, a `String` for a text/raw body, `nil` for a response without content):
+
+```ruby
+response = api.backups.create_backup(sync: true)
+case response.status
+when 200 then File.binwrite("backup.zip", response.body)
+when 202 then puts "backup job #{response.body.id} started" # response.body is a PetStore::Operation
+end
+```
+
+Any other status - including a `2xx` the operation doesn't declare - raises `Runtime::ApiError`.
 
 ## oneOf/anyOf support
 

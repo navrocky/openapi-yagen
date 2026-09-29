@@ -4,7 +4,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 
-{% if model.description %}/** {{ model.description }} */
+{% if model.description %}{{ buildDocComment(model.description) }}
 {% endif -%}
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable

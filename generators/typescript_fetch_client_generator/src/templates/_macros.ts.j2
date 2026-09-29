@@ -1,4 +1,2 @@
-{% macro docComment(text) %}{% if text %}/**
-{{ text | indent(" * ", true) }}
- */
+{% macro docComment(text) %}{% if text %}{{ buildDocComment(text) }}
 {% endif %}{% endmacro -%}

@@ -1,0 +1,142 @@
+package {{ packageName }}
+
+import io.ktor.http.ContentDisposition
+import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.LastModifiedVersion
+import io.ktor.http.content.OutgoingContent
+import io.ktor.http.content.versions
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
+import io.ktor.server.request.contentLength
+import io.ktor.server.request.receiveChannel
+import io.ktor.server.response.header
+import io.ktor.server.response.respond
+import io.ktor.server.routing.RoutingCall
+import io.ktor.util.date.GMTDate
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
+
+/**
+ * A raw (non-JSON, non-form, non-text) request body, handed to the handler still unread - stream it
+ * with [channel], or read it whole with [bytes]. Its Content-Type has already been checked against
+ * the media type the operation declares. Read it at most once.
+ */
+class BinaryBody internal constructor(
+    /** The request's media type, without parameters. */
+    val contentType: ContentType,
+    /** The request's declared body length, or null if unknown (chunked transfer). */
+    val contentLength: Long?,
+    /** The full set of request headers. */
+    val headers: Headers,
+    private val call: RoutingCall,
+) {
+    /** Streams the body directly from the connection, without buffering it in memory. */
+    suspend fun channel(): ByteReadChannel = call.receiveChannel()
+
+    /**
+     * Reads the whole body into memory. Throws [PayloadTooLargeException] (413 with Ktor's default
+     * exception handling) if it's longer than [maxBytes].
+     */
+    suspend fun bytes(maxBytes: Long = Long.MAX_VALUE): ByteArray {
+        if (contentLength != null && contentLength > maxBytes) throw PayloadTooLargeException(maxBytes)
+        val limit = if (maxBytes == Long.MAX_VALUE) maxBytes else maxBytes + 1
+        val data = call.receiveChannel().readRemaining(limit).readByteArray()
+        if (data.size > maxBytes) throw PayloadTooLargeException(maxBytes)
+        return data
+    }
+}
+
+/**
+ * A raw (non-JSON, non-text) response body: either in-memory bytes, or a channel opened on demand
+ * to stream it. With Ktor's PartialContent plugin installed, a Range request against a 200
+ * response with a known [contentLength] is answered with 206 Partial Content automatically; with
+ * the ConditionalHeaders plugin, [lastModified] also answers If-Modified-Since with 304.
+ */
+class BinaryContent private constructor(
+    internal val data: ByteArray?,
+    internal val open: (() -> ByteReadChannel)?,
+    /** The body length, or null if unknown (sent chunked). */
+    val contentLength: Long?,
+    /** If set, sent as Content-Disposition: attachment; filename="name". */
+    val name: String?,
+    /** If set, sent as Last-Modified. */
+    val lastModified: GMTDate?,
+    /** Overrides the media type the operation declares for this response. */
+    val contentType: ContentType?,
+) {
+    /** A body already in memory. */
+    constructor(
+        data: ByteArray,
+        name: String? = null,
+        lastModified: GMTDate? = null,
+        contentType: ContentType? = null,
+    ) : this(data, null, data.size.toLong(), name, lastModified, contentType)
+
+    /** A body streamed from the channel [open] returns (called once per response). */
+    constructor(
+        contentLength: Long?,
+        name: String? = null,
+        lastModified: GMTDate? = null,
+        contentType: ContentType? = null,
+        open: () -> ByteReadChannel,
+    ) : this(null, open, contentLength, name, lastModified, contentType)
+}
+
+private fun RoutingCall.binaryBody(declaredMediaType: String, required: Boolean): BinaryBody? {
+    val contentLength = request.contentLength()
+    val hasBody = contentLength?.let { it > 0 } ?: (request.headers[HttpHeaders.TransferEncoding] != null)
+    if (!hasBody) {
+        if (required) throw BadRequestException("Request body is required")
+        return null
+    }
+    // RFC 9110 section 8.3: a body without a Content-Type may be treated as application/octet-stream.
+    val rawContentType = request.headers[HttpHeaders.ContentType]
+    val actual = if (rawContentType == null) {
+        ContentType.Application.OctetStream
+    } else {
+        try {
+            ContentType.parse(rawContentType).withoutParameters()
+        } catch (e: Exception) {
+            throw UnsupportedMediaTypeException(ContentType.Any)
+        }
+    }
+    if (!actual.match(ContentType.parse(declaredMediaType))) throw UnsupportedMediaTypeException(actual)
+    return BinaryBody(actual, contentLength, request.headers, this)
+}
+
+internal fun RoutingCall.requireBinaryBody(declaredMediaType: String): BinaryBody = binaryBody(declaredMediaType, required = true)!!
+
+internal fun RoutingCall.optionalBinaryBody(declaredMediaType: String): BinaryBody? = binaryBody(declaredMediaType, required = false)
+
+internal suspend fun RoutingCall.respondBinary(status: HttpStatusCode, declaredMediaType: String, content: BinaryContent) {
+    val declared = ContentType.parse(declaredMediaType)
+    val type = content.contentType
+        ?: if (declared.contentType == "*" || declared.contentSubtype == "*") ContentType.Application.OctetStream else declared
+    content.name?.let {
+        response.header(
+            HttpHeaders.ContentDisposition,
+            ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, it).toString(),
+        )
+    }
+    val outgoing = object : OutgoingContent.ReadChannelContent() {
+        override val contentType: ContentType = type
+        override val contentLength: Long? = content.contentLength
+        override val status: HttpStatusCode = status
+
+        override fun readFrom(): ByteReadChannel = content.data?.let { ByteReadChannel(it) } ?: content.open!!()
+
+        override fun readFrom(range: LongRange): ByteReadChannel {
+            val data = content.data ?: return super.readFrom(range)
+            val start = range.first.toInt().coerceIn(0, data.size)
+            val end = (range.last + 1).toInt().coerceIn(start, data.size)
+            return ByteReadChannel(data, start, end - start)
+        }
+    }
+    content.lastModified?.let { outgoing.versions = listOf(LastModifiedVersion(it)) }
+    respond(outgoing)
+}
