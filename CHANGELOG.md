@@ -1,3 +1,11 @@
+# 1.1.0 (2026-09-29)
+
+- Stream raw (binary) request/response bodies instead of buffering them in all generators, sending wildcard media types as `application/octet-stream`; go_net_http_server serves raw responses via `http.ServeContent` (Range, conditional requests, Content-Disposition) and checks the request Content-Type (415 on mismatch) (handler/client signatures change for raw-body operations)
+- Generate a per-status sealed result type for operations with several 2xx responses in all generators, so the server picks e.g. 200 vs 202 at runtime and the client sees which one it got (signatures change for such operations)
+- Add route listing to go_net_http_server: a per-tag `XRoutes()` table, a combined `server.Routes()`, `OpenAPISpec()`, and `RegisterXRoutes` accepting a `server.Router` interface (`*http.ServeMux` still satisfies it)
+- Fix buildDocComment's `/** */` style breaking the generated file when a description contains `*/` or `/*` (e.g. `application/*`)
+- Fix both Go generators emitting an unused models import into files whose only types are `[]byte`, which didn't compile
+
 # 1.0.0 (2026-09-21)
 
 - Add ruby_rails_server_generator: a Ruby/Rails server generator (routing, controllers, models) shipped as a builtin (`builtin:ruby_rails_server`) and emitting an eager_load-safe integration file
