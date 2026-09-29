@@ -601,6 +601,50 @@ renderTemplate("test_template", {
     REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docCrlf=// Line one.\n// Line two."));
 }
 
+TEST_CASE("buildDocComment escapes comment delimiters in the \"/** */\" style", "[generator]")
+{
+    auto fileWriter = make_shared<MockedFileWriter>();
+    auto templateRenderer = make_shared<MockedTemplateRenderer>();
+
+    MockedFileReaderBackend::Files files = {
+        { "main.js", R"JS(
+renderTemplate("test_template", {
+  // "*/" would close the comment early; "/*" opens a nested comment in Kotlin/Swift/Rust.
+  docBlock: buildDocComment("Accepts application/* bodies.", "Ends */ early.", []),
+  docSingle: buildDocComment("Any image/* type"),
+  // Line-comment styles have no delimiter to break - left untouched.
+  docSlash: buildDocComment("Accepts application/* and */.", null, [], "//"),
+}, "outfile");
+)JS" },
+        { "generator.yml", readResource("generator.yml") },
+    };
+
+    auto fileReader = make_shared<FileReader>(FileReader::Opts {
+        .backends = { make_shared<MockedFileReaderBackend>(files) },
+    });
+    auto jsExecutor = make_shared<JS::Executor>(JS::Executor::Opts { .fileReader = fileReader });
+    Generator::OpenApiGenerator gen(Generator::OpenApiGenerator::Opts {
+        .fileReader = fileReader,
+        .fileWriter = fileWriter,
+        .jsExecutor = jsExecutor,
+        .templateRenderer = templateRenderer,
+        .defaultMainSciptPath = "main.js",
+        .metadataPath = "generator.yml",
+        .vars = { },
+        .tags = {},
+        .headerText = std::nullopt,
+        .noHeader = true,
+    });
+
+    gen.generate(getResourcePath("petstore.yaml"));
+
+    auto& out = fileWriter->files["outfile"];
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring(
+                           "docBlock=/**\n * Accepts application/\\* bodies.\n * Ends *\\/ early.\n */"));
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docSingle=/** Any image/\\* type */"));
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docSlash=// Accepts application/* and */."));
+}
+
 TEST_CASE("buildDocComment rejects an unrecognized style", "[generator]")
 {
     auto fileWriter = make_shared<MockedFileWriter>();

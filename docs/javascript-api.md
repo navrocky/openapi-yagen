@@ -160,6 +160,11 @@ buildDocComment(
   result (or the raw `description`) into a `"""..."""` block itself, at the right spot in its own
   template.
 
+In the `"/** */"` style, a literal `*/` or `/*` in the text is written as `*\/` / `/\*` - otherwise
+the former ends the comment early and the latter opens a nested comment in languages whose block
+comments nest (Kotlin, Swift, Rust, Scala). These are markdown escapes, so KDoc/TSDoc/dartdoc still
+render the original text. The line-comment styles need no escaping and leave text as-is.
+
 An unrecognized `style` throws rather than silently falling back, so a typo in a generator's own
 call site fails loudly at generation time instead of emitting silently-wrong comments.
 

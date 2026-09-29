@@ -155,6 +155,19 @@ Node nodeBuildDocComment(const Node::Vec& args)
         return { Node::NullValue };
 
     if (style == "/** */") {
+        // A literal "*/" in the text would end the comment early, and "/*" opens a NESTED comment
+        // in languages whose block comments nest (Kotlin, Swift, Rust, Scala) - either one turns
+        // the rest of the file into a syntax error. Markdown backslash escapes keep both rendered
+        // as-is by KDoc/TSDoc/dartdoc, which treat doc comment text as markdown.
+        auto replaceAll = [](string text, const string& from, const string& to) {
+            for (auto pos = text.find(from); pos != string::npos; pos = text.find(from, pos + to.size()))
+                text.replace(pos, from.size(), to);
+            return text;
+        };
+        for (auto& l : lines) {
+            l = replaceAll(l, "*/", "*\\/");
+            l = replaceAll(l, "/*", "/\\*");
+        }
         if (lines.size() == 1)
             return { format("/** {} */", lines[0]) };
         stringstream ss;
