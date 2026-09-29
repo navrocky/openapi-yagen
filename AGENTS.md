@@ -1,316 +1,50 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in this repository. Read this before making changes — it
-covers what the project is, how it's built, and conventions that aren't obvious from a quick
-skim of the code.
+`openapi-yagen` is a C++20 CLI that generates code from an OpenAPI spec via pluggable generators
+(`main.js` + Inja `.j2` templates + `generator.yml`). User-facing reference: `README.md` and
+`docs/`. Development details live in `docs/develop/` - read the relevant page before working in
+that area.
 
-## What this is
+## Where to look
 
-`openapi-yagen` ("yet another OpenAPI generator") is a C++20 CLI tool that generates source code
-from an OpenAPI spec using pluggable, JavaScript-defined "generators" and Inja (Jinja-like)
-templates. Users write generators (JS + `.j2` templates + a `generator.yml` descriptor), and the
-tool drives spec parsing, JS execution, template rendering, file writing, and optional
-post-processing (formatters/linters).
+| Task | Read |
+|---|---|
+| Understand the code layout (`lib/*`, `cli/`, spec reading/conversion, JS bridge, `--version`) | [`docs/develop/architecture.md`](docs/develop/architecture.md) |
+| Change C++ engine code | [`docs/develop/code-conventions.md`](docs/develop/code-conventions.md) |
+| Add or change a generator under `generators/` | [`docs/develop/generator-conventions.md`](docs/develop/generator-conventions.md), `generators/README.md` |
+| Build (Conan/CMake, Docker static builds, CI caching) | [`docs/develop/building.md`](docs/develop/building.md) |
+| Tests (Catch2, per-generator test projects, end-to-end run) | [`docs/develop/testing.md`](docs/develop/testing.md) |
+| Change CLI options, `generator.yml`, JS/template built-ins; write planning docs | [`docs/develop/docs-upkeep.md`](docs/develop/docs-upkeep.md) |
+| Tidy up `CHANGELOG.md` / make a release | [`docs/develop/releasing.md`](docs/develop/releasing.md) + "Releasing" below |
 
-The full user-facing reference (CLI flags, generator format, built-in functions) lives in
-`README.md` — read it for the "what", this file is the "how to work on it".
+## Must-know rules
 
-## Architecture
+- **Error/log tags**: every new `throw`/log message gets a new unique `<xxxxxxxx>` hex tag,
+  produced by actually running `openssl rand -hex 4` (never hand-typed), grepped for uniqueness
+  first. Details in `code-conventions.md`.
+- Build is `-Werror`; run `./reformat_sources.sh` (clang-format) before committing C++ changes.
+- Quick build & test:
+  ```bash
+  conan install . -s compiler.cppstd=20 --output-folder=build --build=missing
+  cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug
+  cmake --build build -j && ./build/test/openapi-yagen-test
+  ```
+- Generated code comments and generator READMEs must not reference this repo's internals
+  (`AGENTS.md`, `.j2` names, other generators) - see `generator-conventions.md`.
+- `docs/develop/` and `docs/planning/` are internal and not published on the website (it only
+  globs `docs/*.md`).
 
-Entry point: `cli/main.cpp` → `cli/commands/generate_command.cpp` (`GenerateCommand`) wires
-together the pieces below and calls `Generator::OpenApiGenerator::generate()`.
+## Releasing
 
-`lib/` is split into independent static libraries (see each `lib/*/CMakeLists.txt` for exact
-sources/deps):
+`docs/develop/releasing.md` is the generic procedure; this project's specifics:
 
-- `lib/common` — shared value type `Node` (a `std::variant`-based JSON/YAML-like tree, see
-  `node.h`), `NodeWalker` for structured parsing, string helpers, functional-style STL pipe
-  helpers (`std_tools.h`, e.g. `x | mapToVector(...)`, `x | firstOrThrow()`), YAML/JSON parsing.
-- `lib/logger` — small logging facade (`Logger`, `LogLevel`) + console backend.
-- `lib/filesystem` — abstracts reading generator files from a directory, a zip archive, or a
-  remote HTTP(S) URL (`FileReaderBackend` implementations), plus output file writing and
-  post-processing via external tools.
-- `lib/js` — wraps QuickJS (`JS::Executor`) to run a generator's `main.js` as an ES module, with
-  `tools.h/.cpp` converting between `Node` and `JSValue`.
-- `lib/templates` — wraps Inja (`Templates::InjaTemplateRenderer`) for `.j2` template rendering.
-- `lib/openapi` — a version-agnostic canonical OpenAPI object model (`Document`/`Schema`/... in
-  `document.h`/`schema.h`/`info.h`/`security.h`) plus per-version-family readers/writers that
-  convert a raw `Node` to/from it: `v3/` (`reader.cpp`/`writer.cpp`) covers OpenAPI 3.0/3.1/3.2 as
-  one family (they differ only in a handful of fields/dialect quirks), `v2/` covers Swagger/OpenAPI
-  2.0 separately since it's a structurally different format (`host`/`basePath`/`schemes` instead of
-  `servers`, `definitions` instead of `components.schemas`, body/formData parameters instead of
-  `requestBody`, ...). `version_convert.cpp`'s `convertVersion(node, from, to)` composes
-  `<family>::Read` + `<family>::Write` to convert between any two supported versions via this IR as
-  the hub; `resolve.cpp` resolves every `$ref` in the raw `Node` tree (not the typed model) before
-  it reaches `lib/generator`. Reading a spec into the typed model also doubles as its structural
-  validation - a malformed spec fails fast with a clear error naming the missing/misshapen field,
-  no separate JSON-schema validation step. See
-  [`docs/generator-format.md`](docs/generator-format.md#spec-versions-and-conversion) for the
-  user-facing version/conversion behavior this enables.
-- `lib/generator` — ties it together: `OpenApiGenerator::generate()` reads `generator.yml`
-  (`generator_metadata.{h,cpp}`), reads the OpenAPI spec into a `Node`, converts it to the
-  generator's declared `openApiVersion` if needed (`convertToGeneratorVersion`, via `lib/openapi`),
-  resolves all `$ref`s, and executes `main.js` with globals injected (`schema`, `vars`,
-  `renderTemplate`, `renderTemplateToString`, and the common functions in `functions.cpp`: `dump`,
-  `toCamelCase`, `toPascalCase`, `toSnakeCase`, `toScreamingSnakeCase`) via
-  `openapi_js_bridge.{h,cpp}`'s raw-passthrough + typed-field overlay pattern. A generator's
-  `openApiVersion` may only resolve to 3.0/3.1/3.2 - 2.0 works only as a spec *input* (converted up
-  before reaching the JS bridge), never as a generation target, since the bridge's raw shape
-  assumes OAS 3.x (content maps, nested `schema` keys, ...).
-
-`cli/` — CLI11-based argument parsing and command dispatch: `generate`/`g`
-(`commands/generate_command.cpp`) runs the pipeline above, `convert` (`commands/convert_command.cpp`)
-exposes `OpenApi::convertVersion` standalone, independent of any generator. `cli/config.h.in` is
-configured by
-CMake with `APP_VERSION`, taken from `git describe --tags --always` (root `CMakeLists.txt`): an
-exact tag reads as `1.2.3`, N commits past a tag as `1.2.3-N-gHASH`. Requires the build's checkout
-to have full history and tags fetched (see `.github/workflows/build.yml`'s `fetch-depth: 0`) and
-`git` available on `PATH` at configure time (the musl/uClibc Docker build images install it) -
-falls back to `"unknown"` if git or a repo isn't found. Exposed on the CLI via `-v/--version`
-(`CLI::App::set_version_flag` in `cli/main.cpp`) and in the `--help` banner.
-
-`generators/sample_cpp_models_generator/` is a working example generator (used by
-`generators/run.sh` and referenced by `test/`) — a good template to look at when writing or
-debugging a generator, or when changing what globals/functions are exposed to `main.js`.
-
-## Conventions
-
-- **Error/log message tags**: nearly every `throw runtime_error(...)` and log call embeds a
-  short random hex tag like `<88489c35>`, e.g. `throw runtime_error("<d6cb8e9c> Spec file not
-  provided")`. These are unique per call site, used to grep a source location straight from a
-  log/error message. When adding a new throw or log statement, add a new 8-hex-digit tag in the
-  same style (don't reuse an existing one, don't omit it) - generated by **actually running a
-  random-generator command** (e.g. `openssl rand -hex 4`, or Python's `secrets.token_hex(4)`) and
-  pasting its literal output. Never hand-type/compose a hex string yourself, even one meant to
-  "look random" - a whole batch of this project's tags turned out to be visibly sequential
-  (`a1b2c3d4`, `b2c3d4e5`, `c3d4e5f6`, ...) or the same value copy-pasted across unrelated call
-  sites, because they'd been typed rather than actually generated. Before using a newly-generated
-  tag, grep for it to confirm it doesn't already exist anywhere in the codebase.
-- **Functional pipe style**: prefer the `|` helpers in `lib/common/std_tools.h` (`toVector()`,
-  `mapToVector(...)`, `firstOrThrow()`, `toSet()`, etc.) over hand-written loops when transforming
-  ranges, matching existing code.
-- **`Node` as the universal value type**: OpenAPI spec data, generator variables, and JS↔C++
-  values all pass through `Node` (`lib/common/node.h`), not `nlohmann::json` or similar. Convert
-  at the JS boundary via `lib/js/tools.h` (`nodeToJSValue` / `jsValueToNode`).
-- **Options structs**: components take a `struct Opts { ... }` by rvalue-ref constructor (e.g.
-  `OpenApiGenerator::Opts`, `Executor::Opts`) rather than long parameter lists — follow this
-  pattern for new components.
-- **No exceptions across the JS boundary silently swallowed**: JS exceptions are rethrown as C++
-  `runtime_error` via `checkForException`/`rethrowException` in `lib/js/tools.cpp`.
-- Code style is enforced by `_clang-format` (WebKit-based, 120 col). Run `./reformat_sources.sh`
-  before committing C++ changes (requires `clang-format` on PATH); it formats all `*.h`/`*.cpp`
-  except `lib/3rdparty/*`.
-- **Every generator must thread OpenAPI `description` into generated doc comments** (KDoc/TSDoc/
-  Doxygen `///`, whatever the target language uses) - not just capture it into the JS-side model
-  and drop it before rendering. This covers: the model/class itself (schema `description`), each
-  field/property, each generated operation/method (`operation.summary` **and** `operation.description`
-  - both, not just `summary`; a longer `description` is common and gets silently dropped if only
-  `summary` is wired up), each parameter (as `@param`-style lines where the target language's doc
-  convention supports it), and - easy to miss entirely, since nothing else in the engine reads it -
-  the API class/interface itself, sourced from the document's top-level `tags: [{name, description}]`
-  array (`schema.tags` in JS - distinct from `op.tags`, which only lists tag *names* on an
-  operation). If the generator also emits a single bundle/facade class that aggregates one
-  instance of every tag's class (e.g. a client generator's top-level `ApiClient`, constructed once
-  from shared config), that bundle class gets its own doc comment too, sourced from the document's
-  top-level `info.description` (`schema.info.description` in JS) - distinct again from any one
-  tag's description, since the bundle represents the whole API. Each *property* on that bundle
-  class (one per tag) also needs its own doc comment - the same tag description already shown on
-  the class it points to, not left bare just because the class itself is already documented. See
-  `kotlin_ktor_client_generator`/`kotlin_ktor_server_generator`/
-  `typescript_fetch_client_generator`'s `lib/operations.js` (`buildDocLines`/`tagDescription`) and
-  their model templates for the reference implementation - when adding a new generator or
-  reworking an existing one's templates, verify all of the above still holds, not just that the
-  code compiles/runs.
-- **A generator for a dynamically-typed target language must generate its own runtime checks** -
-  don't rely on "it'll fail somewhere eventually." TypeScript/Kotlin generators get a wrong-shaped
-  value (wrong class, wrong property type) rejected for free by the target's own compiler; a
-  dynamically-typed target (Ruby today; Python/PHP/untyped JS if this repo ever grows one of those)
-  has no such backstop - a caller can hand a generated method literally anything, and without the
-  generator's own checks it goes straight to the wire unvalidated. The reference implementation is
-  `ruby_faraday_client_generator`: a type/shape check at the point a caller-constructed value
-  crosses into "about to be serialized" (`to_wire`: `is_a?` for a model class, `ALL_VALUES.include?`
-  for an enum, an explicit raise on an unmatched union variant instead of a silent passthrough),
-  plus generated constraint validation (`minLength`/`pattern`/`minimum`/`maximum`/enum membership/
-  ... via the engine's `constraintsOf()`) through a generated `validate!` method per model - see
-  `src/lib/serialization.js`'s `buildValidateStatements` and `src/templates/model_class.rb.j2`.
-  Make this an **opt-out** generator variable (on by default), not unconditional, so a well-tested
-  integration can skip the overhead in production once it's earned that - see that generator's
-  `validate` variable. When adding a new generator for another dynamically-typed language, apply
-  the same pattern; a statically-typed target's compiler already covers the "wrong shape" half of
-  this, but still gets nothing for free on OpenAPI-level constraints like `minLength`/`pattern` -
-  worth the same consideration there too.
-- **Comments in GENERATED code must not reference the generator's own internals** - no `.j2`
-  template filenames, `AGENTS.md`, `main.js`, internal JS function names (`buildValidateStatements`
-  and the like), or other generators in this project by name. The reader of a generated file only
-  has that file - not this repo's source. A comment explaining something about *that file itself*
-  (a method's behavior, a data format, OpenAPI semantics) is fine, even at length - a comment
-  explaining why the generator's authors chose one implementation over another is not.
-- **A generator's README documents USE, not DESIGN** - a clear description of what the generator
-  produces, step-by-step integration with working examples, and practically relevant behavior
-  (formats, errors, limitations). The reader has only that one README, not the whole repo - don't
-  send them to `AGENTS.md` or to another generator's README ("same restriction X applies" / "see
-  that generator's README for..."); inline the fact itself instead. Don't explain why one
-  implementation choice was made over another unless it changes how the reader uses the generator.
-
-## Building
-
-Dependencies are managed via Conan 2 (`conanfile.txt`): termcolor, yaml-cpp, cli11, quickjs,
-kuba-zip, catch2, nlohmann_json, battery-embed (embeds the built-in generators, see
-`lib/filesystem/`'s `EMBEDDED_GENERATOR_DIRS`). Inja itself is vendored, not a Conan dependency -
-see `lib/3rdparty/inja/NOTICE.md`. Requires CMake ≥ 3.21 and a C++20 compiler (both driven by
-battery-embed's own floor).
-
-Local build:
-```bash
-conan profile detect --force   # first time only
-conan install . -s compiler.cppstd=20 --output-folder=build --build=missing
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j
-```
-`-s compiler.cppstd=20` is required - `conan profile detect`'s auto-detected default profile
-picks a `gnu17`-style value that satisfies the project's own `CMAKE_CXX_STANDARD 20` toolchain
-setting at the compiler-flag level, but doesn't satisfy battery-embed's own Conan-recipe-level
-minimum-cppstd package validation, so `conan install` fails with `Invalid: Current cppstd (gnu17)
-is lower than the required C++ standard (20)` without it. `conanfile.txt` can't declare this
-itself (no `[settings]` section is valid there), so it's passed on every `conan install`
-invocation instead (also updated in `Dockerfile.musl`, `Dockerfile.uclibc`, and
-`.github/workflows/build.yml`'s `kotlin-native-compile-check` job).
-The binary is `build/cli/openapi-yagen`. Build treats warnings as errors
-(`-Wall -Wextra -Wpedantic -Werror`, see root `CMakeLists.txt`) — expect a clean build to fail on
-any new warning.
-
-Static, statically-linked release binaries (as shipped in `dist/` and CI) are built via Docker:
-`./build-musl.sh` (musl/Alpine, x86_64 — output `dist/openapi-yagen`) and `./build-uclibc.sh`
-(uClibc, x86, older glibc-free targets — output `dist/openapi-yagen-5`). These are what
-`.github/workflows/build.yml` runs (build + upload artifact) on pull requests targeting `master`
-and on semver tag pushes, publishing a GitHub Release only for the latter.
-
-Both Dockerfiles cache Conan's package cache (`/root/.conan2`) via a BuildKit `RUN
---mount=type=cache` (needs `# syntax=docker/dockerfile:1` as the file's first line). A cache mount
-is **not** part of the committed image layer - it only exists for the duration of the `RUN` that
-mounts it - so every `RUN` that needs anything under `/root/.conan2` (`conan profile detect`,
-`conan install`, and the final `cmake`/build step, which links against libraries living in the
-Conan package cache) must mount it, or it'll see an empty/incomplete dir and fail (e.g. "Library
-'yaml-cpp' not found in package"). `build-musl.sh`/`build-uclibc.sh` build with `docker buildx
-build --load ${DOCKER_BUILDX_ARGS:-}` - CI sets `DOCKER_BUILDX_ARGS` to add
-`--cache-from/--cache-to type=gha` (via `docker/setup-buildx-action`) so the whole `conan install`
-layer is reused across runs too; locally the var is just unset/empty.
-
-## Testing
-
-Tests use Catch2 3, in `test/` (`common_test.cpp`, `generator_test.cpp`, `openapi_js_test.cpp`,
-`openapi_test.cpp`, `parser_test.cpp`, `v2_reader_writer_test.cpp`, `v3_reader_writer_test.cpp`,
-`vfs_test.cpp`), built as the `openapi-yagen-test` target alongside the main build. Test
-resources (sample specs, generator files, a test zip) live in `test/resources/`.
-
-```bash
-cmake --build build -j --target openapi-yagen-test
-./build/test/openapi-yagen-test
-```
-
-`generator_test.cpp` uses mocked `TemplateRenderer`/`FileReaderBackend` — follow that pattern
-(don't hit the real filesystem or network) when adding tests for generator/JS-executor behavior.
-
-Each generator is also a self-contained subproject under `generators/<name>/` — `README.md` +
-`src/` (everything `-g` points at) + `test/` (that generator's own runtime test suite, if it has
-one). `kotlin_ktor_client_generator/test/` and `kotlin_ktor_server_generator/test/` are
-independent Kotlin Multiplatform (`jvm()` + `linuxX64()`) Gradle projects that regenerate from
-their own kitchen-sink spec: `./gradlew test` (aliased to `jvmTest`) actually runs the generated
-code under JUnit5 (`testApplication`/`MockEngine`), not just compiles it, while
-`./gradlew compileKotlinLinuxX64` proves the same generated code also compiles under Kotlin/Native
-(checked in CI - `.github/workflows/build.yml`'s `kotlin-native-compile-check` job) - see
-`generators/README.md` for the convention and how to run one in isolation.
-
-## Trying it end-to-end
-
-`generators/run.sh` runs the CLI against the example generator and the test petstore spec:
-```bash
-./build/cli/openapi-yagen g -o generators/out -g generators/sample_cpp_models_generator/src \
-    -c test/resources/petstore.yaml -v "namespace=OpenAPI"
-```
-(the checked-in `generators/run.sh` assumes an installed `openapi-yagen` on PATH and
-`clang-format` post-processing; adjust the path to your local build binary.)
-
-## Docs upkeep
-
-If you change the CLI options, update `README.md`'s "CLI reference" section. If you change the
-`generator.yml` schema, built-in JS/template functions, or the globals exposed to `main.js`, update
-the corresponding page under [`docs/`](docs/README.md) instead - that's the user-facing source of
-truth for writing a generator and easily drifts from code. `README.md`'s `## TODO` section tracks
-known gaps/planned features; check it before assuming something missing is an oversight rather
-than planned work.
-
-Internal analysis/planning write-ups (design tradeoffs, a backlog item's own "why" and acceptance
-criteria, anything meant for whoever picks the work back up rather than for someone writing a
-generator) go under `docs/planning/`, not directly under `docs/`: the website's `include` list
-(`website/docusaurus.config.ts`) only globs `docs/*.md` - not recursive - so a `docs/planning/*.md`
-file never reaches the published site. `TODO-improvements.md` at the repo root is the running
-backlog these documents typically feed into.
-
-### "Tidy up CHANGELOG"
-
-When asked to tidy up `CHANGELOG.md`, edit
-only the section for commits since the last tagged release (`git tag -l`) - typically the topmost,
-still-unreleased heading. For each commit message in that section:
-
-- Drop entries with no interest to `openapi-yagen` users: routine `README` touch-ups, internal
-  test/CI/build-tooling churn (test project restructuring, Docker base image bumps, Gradle
-  wrappers), typo fixes, reverted/rolled-back intermediate steps, and other commits that don't
-  change a user- or generator-author-visible behavior, built-in, or CLI flag.
-- Refactors and source-tree reorganizations (moving files, renaming internal folders, splitting
-  modules) are not interesting to users on their own - drop them. Only mention one if it changes a
-  path/name a user actually passes on the command line (e.g. a renamed generator directory).
-- Rephrase entries that describe an internal implementation step (a class name, a file path, "lib/
-  ...") into a plain description of the resulting user-visible capability.
-- Consolidate a run of incremental commits that build up one feature (e.g. a series of "Add X",
-  "Extend X", "Document X" commits landing one JS API) into a single bullet describing the
-  feature's end state, rather than listing every step.
-- Multiple commits touching the same generator or component (e.g. several separate commits about
-  the Kotlin generators) collapse into one bullet naming that generator/component once, not one
-  bullet per commit.
-- Keep bug fixes, new CLI/generator-author-facing features, new built-ins, new example generators,
-  and install/release process changes - these are what users read the changelog for. But still aim
-  to leave only what matters most: fold minor/low-signal entries into a closely related bullet
-  instead of listing them on their own, rather than keeping every commit as a separate line.
-
-Preserve the existing formatting: one version heading per release (`# <semver> (<date>)`, matching
-`APP_VERSION`'s source - see "Architecture" above), one `- ` bullet per entry. Do not touch
-already-released version sections.
-
-Order the entries in three groups, in this order: new features first, then changes to existing
-behavior (including docs/process changes), then bug fixes last. Within each group, keep entries in
-newest-first order (their original relative order).
-
-### "Make a release"
-
-A release is an annotated `x.y.z` git tag (no `v` prefix). Pushing it runs
-`.github/workflows/build.yml`: it builds the static Linux amd64/arm64 and macOS binaries, publishes
-them on a GitHub Release for that tag, and pushes the runtime Docker image as
-`ghcr.io/openapi-yagen/openapi-yagen:<x.y.z>` and `:latest`. The CLI's `--version` comes from the
-same tag via `git describe` (see "Architecture" above). Never create or push a tag unless explicitly
-asked to make a release.
-
-1. Pull fresh tags: `git fetch --tags --force origin` (a tag may have been created or moved on
-   GitHub).
-2. Run `./update_changelog_from_git.sh`: it inserts a `# X.X.X (<today>)` heading on top of
-   `CHANGELOG.md` with one `- ` bullet per commit subject since the last version in the file (it
-   refuses to run while an `X.X.X` section is still there).
-3. Tidy up that new section (see "Tidy up CHANGELOG" above).
-4. Pick the version from the last tag (`git tag -l`): only bug fixes -> patch (`1.0.0` ->
-   `1.0.1`); anything new -> minor (`1.0.0` -> `1.1.0`); a change that breaks existing
-   users - a removed/renamed CLI flag, generator variable, or JS/template built-in, or generated
-   code whose public API changes incompatibly for an existing spec - -> major (`1.0.0` -> `2.0.0`).
-   **Stop here and ask the user which version to release** - don't pick it silently. Propose the
-   version the rules above point to and explain why: which changelog entries make it a patch,
-   minor, or major bump (e.g. "2.0.0: the go_net_http_server raw-body handler signatures changed").
-   Wait for the answer: the user either approves the proposed version or names a different one -
-   use whichever they choose. Only then replace `X.X.X` in the heading with it.
-5. Commit only `CHANGELOG.md`, as `Release v<x.y.z>`.
-6. Create an annotated tag on that commit whose message is exactly that release's changelog
-   bullets (no heading), written to a file first - one unwrapped line per bullet, not passed via
-   `-m` - then push the commit and the tag:
-
-   ```bash
-   git tag -a <x.y.z> -F <message-file>
-   git push origin HEAD <x.y.z>
-   ```
+- **Changelog script**: `./update_changelog_from_git.sh`.
+- **Release workflow**: an `x.y.z` tag push runs `.github/workflows/build.yml` - static Linux
+  amd64/arm64 and macOS binaries on a GitHub Release, Docker image
+  `ghcr.io/openapi-yagen/openapi-yagen:<x.y.z>` and `:latest`. `--version` comes from the tag via
+  `git describe`.
+- **Users**: people running the CLI and generator authors - changes to CLI flags,
+  `generator.yml`, JS/template built-ins, built-in generators and the code they emit,
+  install/release options. A renamed generator directory or `builtin:` name is user-visible.
+- **Breaking change** (major): a removed/renamed CLI flag, generator variable, or JS/template
+  built-in, or generated code whose public API changes incompatibly for an existing spec.

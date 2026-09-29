@@ -322,7 +322,8 @@ directory/zip/URL - plus a link to each generator's own documentation.
 ## Development
 
 The project is a CMake + Conan 2 C++20 codebase (core in `lib/`, CLI in `cli/`, tests in
-`test/`). See [AGENTS.md](https://github.com/openapi-yagen/openapi-yagen/blob/master/AGENTS.md) for build/test commands, project architecture, and coding
+`test/`). See [AGENTS.md](https://github.com/openapi-yagen/openapi-yagen/blob/master/AGENTS.md) and
+[`docs/develop/`](https://github.com/openapi-yagen/openapi-yagen/tree/master/docs/develop) for build/test commands, project architecture, and coding
 conventions - it's the entry point for working on the `openapi-yagen` engine itself (as opposed to
 writing a generator, which [`docs/`](docs/README.md) covers).
 
