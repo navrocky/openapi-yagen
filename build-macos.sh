@@ -23,7 +23,8 @@ build_arch() {
     conan install "$REPO_ROOT" -s compiler.cppstd=20 -s arch="$conan_arch" \
         --output-folder="$build_dir" --build=missing
     cmake -S "$REPO_ROOT" -B "$build_dir" \
-        -DCMAKE_TOOLCHAIN_FILE="$build_dir/conan_toolchain.cmake" -DCMAKE_BUILD_TYPE=Release -G Ninja
+        -DCMAKE_TOOLCHAIN_FILE="$build_dir/conan_toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTS=OFF -G Ninja
     cmake --build "$build_dir" --target ${APP_NAME}
 }
 

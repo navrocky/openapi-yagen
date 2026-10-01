@@ -70,9 +70,15 @@ add_subdirectory(lib)
 # The Emscripten build only produces the browser playground's wasm module (see wasm/CMakeLists.txt)
 # - it skips cli/ and test/, which depend on CLI11/Catch2 (not installed for the wasm Conan profile,
 # and not meaningful in a browser context: no argv, no terminal to run a test binary in).
+# Release/distribution builds (Dockerfile.musl/uclibc, build-macos.sh) pass -DBUILD_TESTS=OFF so
+# they don't spend time compiling and linking the Catch2 test binary they never run.
+option(BUILD_TESTS "Build the Catch2 unit test binary (test/)" ON)
+
 if(EMSCRIPTEN)
     add_subdirectory(wasm)
 else()
     add_subdirectory(cli)
-    add_subdirectory(test)
+    if(BUILD_TESTS)
+        add_subdirectory(test)
+    endif()
 endif()

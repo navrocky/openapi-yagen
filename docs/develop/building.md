@@ -32,6 +32,11 @@ even one only filled via an out-parameter. Where `clang-tidy` isn't installed (t
 macOS release builds) the step is skipped with a CMake warning; `-DENABLE_CLANG_TIDY=OFF` turns
 it off explicitly. It roughly doubles full-rebuild time.
 
+`BUILD_TESTS` (on by default) adds the Catch2 test binary (`test/`). The release builds
+(`Dockerfile.musl`, `Dockerfile.uclibc`, `Dockerfile.wasm`, `build-macos.sh`) pass
+`-DBUILD_TESTS=OFF` so they don't compile tests they never run; keep that flag on any new
+release/distribution build script.
+
 ## Release binaries
 
 Static, statically-linked release binaries (as shipped in `dist/` and CI) are built via Docker:
