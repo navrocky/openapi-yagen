@@ -125,6 +125,39 @@ TEST_CASE("Directory file writer confines output to outDir", "[vfs]")
     remove_all(outDir);
 }
 
+TEST_CASE("Directory file writer refuses to clear the current directory or its parents", "[vfs]")
+{
+    auto root = path(temp_directory_path()) / "openapi-yagen-vfs-clear-test";
+    remove_all(root);
+    create_directories(root / "work" / "out");
+    ofstream(root / "work" / "src.txt") << "keep";
+    ofstream(root / "work" / "out" / "old.txt") << "old";
+
+    auto savedCwd = current_path();
+    current_path(root / "work");
+
+    SECTION("Rejects the current directory")
+    {
+        DirFileWriter writer(DirFileWriter::Opts { .outDir = ".", .filePostProcessor = nullptr });
+        REQUIRE_THROWS(writer.clear());
+    }
+    SECTION("Rejects a parent of the current directory")
+    {
+        DirFileWriter writer(DirFileWriter::Opts { .outDir = "..", .filePostProcessor = nullptr });
+        REQUIRE_THROWS(writer.clear());
+    }
+    SECTION("Clears a subdirectory")
+    {
+        DirFileWriter writer(DirFileWriter::Opts { .outDir = "out", .filePostProcessor = nullptr });
+        writer.clear();
+        REQUIRE(!exists(root / "work" / "out" / "old.txt"));
+    }
+    REQUIRE(exists(root / "work" / "src.txt"));
+
+    current_path(savedCwd);
+    remove_all(root);
+}
+
 TEST_CASE("Post process file", "[vfs]")
 {
     SECTION("Substitutes %file% with the (shell-quoted) file path")

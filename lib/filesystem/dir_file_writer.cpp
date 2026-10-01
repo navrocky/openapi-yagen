@@ -56,6 +56,14 @@ void DirFileWriter::clear()
 {
     if (!filesystem::exists(opts.outDir))
         return;
+    // Clearing the working directory (the default "-o .") or one of its parents would wipe the
+    // user's own sources, so refuse instead of guessing what was meant.
+    auto outDir = filesystem::weakly_canonical(opts.outDir);
+    auto rel = filesystem::weakly_canonical(filesystem::current_path()).lexically_relative(outDir);
+    if (!rel.empty() && *rel.begin() != "..")
+        throw runtime_error(format("<7d2fe6a4> Refusing to clear output directory \"{}\": it is the current "
+                                   "directory or one of its parents, specify a dedicated --out-dir",
+            opts.outDir));
     for (const auto& entry : filesystem::directory_iterator(opts.outDir)) {
         auto fn = entry.path().filename();
         if (fn != "." && fn != "..")

@@ -157,6 +157,13 @@ which comment style the engine picks for *its own* output, regardless of extensi
 `generator.yml`'s `commentStyle` field (see [`generator-format.md`](docs/generator-format.md)) -
 useful if the built-in extension table guesses wrong for an unusual output format.
 
+#### Clearing the output directory
+
+`-c/--clear` deletes everything inside `--out-dir` before generating; without it existing files
+are kept and only overwritten. As a safeguard, clearing is refused when the output directory is
+the current directory (the default `-o .`) or one of its parents - point `--out-dir` at a
+dedicated directory for generated code.
+
 #### Post-processing generated files
 
 `-p/--post-process <spec>` runs an external command on each generated file, keyed by extension:

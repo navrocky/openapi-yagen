@@ -21,7 +21,7 @@ private:
     std::vector<std::string> postProcessTools;
     std::vector<std::string> vars;
     std::vector<std::string> tags;
-    bool clearOutDir;
+    bool clearOutDir = false;
     std::optional<std::string> headerText;
-    bool noHeader;
+    bool noHeader = false;
 };
