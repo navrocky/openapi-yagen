@@ -22,6 +22,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror -Wno-co
 # a -Werror build failure. GCC silently ignores -Wno- flags it doesn't recognize, so this is a
 # no-op there.
 
+# Checks from .clang-tidy (uninitialized fields/variables, which -Wall's -Wuninitialized can't see
+# across calls) run on every compiled source and fail the build. Skipped with a warning where
+# clang-tidy isn't installed. Only project headers are checked - not lib/3rdparty or Conan packages.
+option(ENABLE_CLANG_TIDY "Run clang-tidy checks from .clang-tidy during the build" ON)
+if(ENABLE_CLANG_TIDY)
+    find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+    if(CLANG_TIDY_EXE)
+        set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_EXE}
+            "--header-filter=^${CMAKE_SOURCE_DIR}/(cli|test|wasm|lib/(common|filesystem|generator|js|logger|openapi|templates))/")
+    else()
+        message(WARNING "clang-tidy not found - uninitialized field/variable checks are skipped")
+    endif()
+endif()
+
 if(NOT RELEASE_MODE)
     # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror -Wno-comment -Wno-reorder -Werror=return-type -Woverloaded-virtual")
 else()

@@ -25,6 +25,13 @@ The binary is `build/cli/openapi-yagen`. Build treats warnings as errors
 (`-Wall -Wextra -Wpedantic -Werror`, see root `CMakeLists.txt`) — expect a clean build to fail on
 any new warning.
 
+clang-tidy runs on every compiled source as part of the build (`ENABLE_CLANG_TIDY`, on by
+default) with the checks from `.clang-tidy` - uninitialized class fields and local variables -
+and any finding is an error. Initialize every scalar/pointer field and local at its declaration,
+even one only filled via an out-parameter. Where `clang-tidy` isn't installed (the Docker and
+macOS release builds) the step is skipped with a CMake warning; `-DENABLE_CLANG_TIDY=OFF` turns
+it off explicitly. It roughly doubles full-rebuild time.
+
 ## Release binaries
 
 Static, statically-linked release binaries (as shipped in `dist/` and CI) are built via Docker:

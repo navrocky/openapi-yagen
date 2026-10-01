@@ -5,7 +5,7 @@
 namespace ProcessExecutor {
 
 struct ExecutionResult {
-    int result;
+    int result = 0;
     std::string stdOut;
     std::string stdErr;
 };

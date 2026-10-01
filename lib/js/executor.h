@@ -24,7 +24,7 @@ public:
 
 private:
     Opts opts;
-    JSRuntime* runtime;
+    JSRuntime* runtime = nullptr;
 };
 
 }

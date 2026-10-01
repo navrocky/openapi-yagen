@@ -24,13 +24,13 @@ public:
     const JSValue& operator*() const { return v; }
 
 private:
-    JSContext* ctx;
+    JSContext* ctx = nullptr;
     JSValue v;
-    bool empty;
+    bool empty = false;
 };
 
 struct WrapParams {
-    JSContext* ctx;
+    JSContext* ctx = nullptr;
 };
 inline WrapParams wrap(JSContext* ctx) { return { ctx }; }
 inline JSValueWrapper operator|(const JSValue& v, const WrapParams& params) { return JSValueWrapper(params.ctx, v); }

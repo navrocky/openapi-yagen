@@ -100,7 +100,7 @@ Node getFinalVars(const vector<string>& vars, const GeneratorMetadata& metadata)
 // validation step anymore.
 struct VersionedSpec {
     Node node;
-    OpenApi::OpenApiVersion version;
+    OpenApi::OpenApiVersion version = OpenApi::OpenApiVersion::V3_0;
 };
 
 VersionedSpec convertToGeneratorVersion(const GeneratorMetadata& metadata, const Node& specNode)
@@ -192,8 +192,8 @@ bool jsObjectHasOwnKeys(JSContext* ctx, JSValueConst v)
 {
     if (!JS_IsObject(v))
         return false;
-    JSPropertyEnum* propEnum;
-    uint32_t len;
+    JSPropertyEnum* propEnum = nullptr;
+    uint32_t len = 0;
     if (JS_GetOwnPropertyNames(ctx, &propEnum, &len, v, JS_GPN_STRING_MASK) < 0)
         return false;
     for (uint32_t i = 0; i < len; i++)
@@ -345,8 +345,8 @@ JSValue nameOfBuiltin(JSContext* ctx, JSValueConst thisVal, int argc, JSValueCon
 }
 
 struct CollectOperationsCtx {
-    Generator::OpenApiJsGraphBuilder* builder;
-    const vector<OpenApi::ResolvedOperation>* operations;
+    Generator::OpenApiJsGraphBuilder* builder = nullptr;
+    const vector<OpenApi::ResolvedOperation>* operations = nullptr;
 };
 
 JSValue collectOperationsBuiltin(JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv, int magic,
@@ -379,8 +379,8 @@ JSValue firstSuccessResponseBuiltin(JSContext* ctx, JSValueConst thisVal, int ar
         if (!JS_IsObject(argv[0]))
             return JS_NULL;
 
-        JSPropertyEnum* propEnum;
-        uint32_t len;
+        JSPropertyEnum* propEnum = nullptr;
+        uint32_t len = 0;
         if (JS_GetOwnPropertyNames(ctx, &propEnum, &len, argv[0], JS_GPN_STRING_MASK) < 0)
             throw runtime_error("<76add204> Cannot enumerate responses object");
         vector<string> codes;

@@ -43,19 +43,21 @@ void ConvertCommand::process()
 {
     auto specNode = readSpecFile(specPath);
 
-    OpenApi::OpenApiVersion from;
-    if (!fromVersion.empty()) {
-        auto parsed = OpenApi::parseVersionString(fromVersion);
-        if (!parsed)
-            throw runtime_error(format("<fa5b67d4> Unrecognized --from version \"{}\"", fromVersion));
-        from = *parsed;
-    } else {
-        auto detected = OpenApi::detectVersion(specNode);
-        if (!detected)
-            throw runtime_error("<9d5bc5c6> Cannot determine the spec's OpenAPI version - expected a top-level "
-                                "\"openapi\" (3.x) or \"swagger\" (2.0) field with a recognized value, or pass --from");
-        from = *detected;
-    }
+    auto from = [&] {
+        if (!fromVersion.empty()) {
+            auto parsed = OpenApi::parseVersionString(fromVersion);
+            if (!parsed)
+                throw runtime_error(format("<fa5b67d4> Unrecognized --from version \"{}\"", fromVersion));
+            return *parsed;
+        } else {
+            auto detected = OpenApi::detectVersion(specNode);
+            if (!detected)
+                throw runtime_error("<9d5bc5c6> Cannot determine the spec's OpenAPI version - expected a top-level "
+                                    "\"openapi\" (3.x) or \"swagger\" (2.0) field with a recognized value, "
+                                    "or pass --from");
+            return *detected;
+        }
+    }();
 
     auto to = OpenApi::parseVersionString(toVersion);
     if (!to)

@@ -173,7 +173,7 @@ std::string shellSingleQuote(const std::string& s);
 // (`literal` set) or a `{param}` placeholder (`param` set to the name with the braces stripped) -
 // never both.
 struct PathTemplateSegment {
-    bool isParam;
+    bool isParam = false;
     std::string value;
 };
 

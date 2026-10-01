@@ -23,7 +23,7 @@ public:
 
 ZipFileReaderBackend::ZipFileReaderBackend(const std::string& zipPath)
 {
-    int errnum;
+    int errnum = 0;
     auto res = zip_openwitherror(zipPath.c_str(), 0, 'r', &errnum);
     if (!res)
         throw ZipError(format("<84e9b859> Cannot open zip=\"{}\"", zipPath), errnum);
@@ -38,8 +38,8 @@ std::optional<string> ZipFileReaderBackend::read(const std::string& filePath)
     if (res != 0)
         throw ZipError(format("<896c1e42> Cannot open zip entry=\"{}\"", filePath), res);
     finalize { zip_entry_close(zip.get()); };
-    void* buf;
-    size_t size;
+    void* buf = nullptr;
+    size_t size = 0;
     res = zip_entry_read(zip.get(), &buf, &size);
     if (res < 0)
         throw ZipError(format("<bb2b6f5a> Cannot read zip entry=\"{}\"", filePath), res);

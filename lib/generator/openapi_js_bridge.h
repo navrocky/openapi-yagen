@@ -64,7 +64,7 @@ private:
     void overlayPathItem(JSValue pathItemObj, const OpenApi::PathItem& item);
     void overlayOperation(JSValue opObj, const OpenApi::Operation& op);
 
-    JSContext* ctx;
+    JSContext* ctx = nullptr;
     std::map<const void*, JS::JSValueWrapper> schemaMemo;
     std::map<const void*, JS::JSValueWrapper> parameterMemo;
     std::map<const void*, JS::JSValueWrapper> requestBodyMemo;

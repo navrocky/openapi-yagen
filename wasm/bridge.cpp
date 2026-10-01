@@ -46,7 +46,7 @@ struct VariableInfo {
     string name;
     string description;
     string defaultValue;
-    bool required;
+    bool required = false;
 };
 
 struct GeneratorInfoResult {
@@ -319,19 +319,20 @@ ConvertResult convertSpec(const string& specText, const string& fromVersion, con
         writeMemFile(SPEC_PATH, specText);
         auto specNode = readSpecFile(SPEC_PATH);
 
-        OpenApi::OpenApiVersion from;
-        if (!fromVersion.empty()) {
-            auto parsed = OpenApi::parseVersionString(fromVersion);
-            if (!parsed)
-                throw runtime_error(format("Unrecognized source version \"{}\"", fromVersion));
-            from = *parsed;
-        } else {
-            auto detected = OpenApi::detectVersion(specNode);
-            if (!detected)
-                throw runtime_error("Cannot determine the spec's OpenAPI version - expected a top-level "
-                                     "\"openapi\" (3.x) or \"swagger\" (2.0) field with a recognized value");
-            from = *detected;
-        }
+        auto from = [&] {
+            if (!fromVersion.empty()) {
+                auto parsed = OpenApi::parseVersionString(fromVersion);
+                if (!parsed)
+                    throw runtime_error(format("Unrecognized source version \"{}\"", fromVersion));
+                return *parsed;
+            } else {
+                auto detected = OpenApi::detectVersion(specNode);
+                if (!detected)
+                    throw runtime_error("Cannot determine the spec's OpenAPI version - expected a top-level "
+                                         "\"openapi\" (3.x) or \"swagger\" (2.0) field with a recognized value");
+                return *detected;
+            }
+        }();
 
         auto to = OpenApi::parseVersionString(toVersion);
         if (!to)

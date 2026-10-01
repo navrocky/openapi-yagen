@@ -31,7 +31,7 @@ ExecutionResult execute(const std::string& cmd)
     auto perr = fdopen(pfd[0], "r");
     finalize { fclose(perr); };
 
-    array<char, 128> buffer;
+    array<char, 128> buffer{};
     ExecutionResult res;
     auto finalCmd = format("{} 2>&{}", cmd, pfd[1]);
     auto pout = popen(finalCmd.c_str(), "r");
@@ -46,7 +46,7 @@ ExecutionResult execute(const std::string& cmd)
 
         // read std err in separated thread
         thread th([perr, &res]() {
-            array<char, 128> buffer;
+            array<char, 128> buffer{};
             while (fgets(buffer.data(), static_cast<int>(buffer.size()), perr) != nullptr) {
                 res.stdErr += buffer.data();
             }

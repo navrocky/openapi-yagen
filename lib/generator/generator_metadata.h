@@ -13,7 +13,7 @@ struct VariableDescriptor {
     Str name;
     OptStr description;
     OptStr defaultValue;
-    bool required;
+    bool required = false;
 };
 
 struct GeneratorMetadata {

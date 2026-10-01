@@ -13,8 +13,8 @@ Node convertNode(const YAML::Node& n);
 
 Node convertScalar(const YAML::Node& n)
 {
-    bool b;
-    int64_t i;
+    bool b = false;
+    int64_t i = 0;
     string s;
     // A quoted scalar ("+1", "42", "true") gets YAML's non-specific "!" tag, meaning: don't run
     // implicit type resolution on its content, it's a string, full stop. Only a plain/unquoted

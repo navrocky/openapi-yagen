@@ -61,7 +61,7 @@ string jsValueToString(JSContext* ctx, const JSValue& v)
 {
     if (!JS_IsString(v))
         throw runtime_error("<1e6e73a0> Value is not a string");
-    size_t len;
+    size_t len = 0;
     auto s = JS_ToCStringLen(ctx, &len, v);
     finalize { JS_FreeCString(ctx, s); };
     return string(s, len);
@@ -104,8 +104,8 @@ void jsIterateObjectProps(
 {
     if (!JS_IsObject(v))
         throw runtime_error("<6396dcb7> Object expected");
-    JSPropertyEnum* propEnum;
-    uint32_t len;
+    JSPropertyEnum* propEnum = nullptr;
+    uint32_t len = 0;
     if (JS_GetOwnPropertyNames(ctx, &propEnum, &len, v, JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) < 0)
         throw runtime_error("<5d5199f0> Cannot enum props");
     finalize
@@ -137,7 +137,7 @@ Node jsValueToNode(JSContext* ctx, const JSValue& v)
             throw runtime_error("<01a84c55>");
         return { res ? true : false };
     } else if (JS_IsNumber(v)) {
-        int64_t i;
+        int64_t i = 0;
         if (JS_ToInt64(ctx, &i, v) == -1)
             throw runtime_error("<905ba2d4>");
         return { i };
@@ -148,7 +148,7 @@ Node jsValueToNode(JSContext* ctx, const JSValue& v)
         finalize { JS_FreeAtom(ctx, lengthAtom); };
         auto lengthProp = JS_GetProperty(ctx, v, lengthAtom);
         finalize { JS_FreeValue(ctx, lengthProp); };
-        uint64_t len;
+        uint64_t len = 0;
         if (JS_ToIndex(ctx, &len, lengthProp) < 0)
             throw runtime_error("<d9acc18b>");
         Node::Vec res;
