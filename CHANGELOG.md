@@ -1,3 +1,8 @@
+# 1.1.1 (2026-10-01)
+
+- Make `generate -c/--clear` refuse to clear the current directory or any of its parents (e.g. the default `-o .`), so it can no longer delete the project's own sources - point `--out-dir` at a dedicated directory instead
+- Fix `generate` sometimes clearing the output directory (the current directory by default) even without `-c/--clear`
+
 # 1.1.0 (2026-09-29)
 
 - Stream raw (binary) request/response bodies instead of buffering them in all generators, sending wildcard media types as `application/octet-stream`; go_net_http_server serves raw responses via `http.ServeContent` (Range, conditional requests, Content-Disposition) and checks the request Content-Type (415 on mismatch) (handler/client signatures change for raw-body operations)
