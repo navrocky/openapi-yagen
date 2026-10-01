@@ -26,12 +26,17 @@ paths:
       operationId: listPets
       tags: [pets]
       summary: List all pets.
-      description: Returns a page of pets, optionally filtered by tag.
+      description: |
+        Returns a page of pets, optionally filtered by tag.
+
+        A multi-line description - every line must stay inside the generated doc comment.
       parameters:
         - name: limit
           in: query
           required: false
-          description: Maximum number of pets to return.
+          description: |
+            Maximum number of pets to return.
+            Continues on a second line.
           schema:
             type: integer
             maximum: 100

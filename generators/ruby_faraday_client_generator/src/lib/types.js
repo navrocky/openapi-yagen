@@ -117,8 +117,8 @@ function registerClass(registry, name, schema) {
   // label/description directly) and, here, the constructor - reuses the engine's buildDocComment
   // rather than hand-formatting `# @param` lines, with `[Type]` embedded into each param's own
   // description text (buildDocComment's params have no separate type field) for the same "Ruby has
-  // no static type to show this for free" reason lib/operations.js's own buildDocLines exists for
-  // operation methods (which also need a `@return` buildDocComment has no equivalent for).
+  // no static type to show this for free" reason lib/operations.js's buildOperationDocComment
+  // types its operation methods' @param/@return tags.
   const initParams = props.map((p) => ({
     name: p.rubyName,
     description: p.description ? `[${p.label}] ${p.description}` : `[${p.label}]`,

@@ -67,6 +67,10 @@ Node nodeSplitPathTemplate(const Node::Vec& args)
 // Unrecognized `style` values throw rather than silently falling back, so a typo in a generator's
 // own call site fails loudly at generation time instead of emitting silently-wrong comments.
 //
+// The optional 5th argument `tags` ([{tag, text}]) appends arbitrary doc tags after the @param
+// entries, as "<tag> <text>". `tag` is written verbatim, sigil included ("@return", "\\return",
+// ":param id:", ...), since tag syntax differs per language well beyond the leading character.
+//
 // Returns Node::NullValue (not "") when there's nothing to document: Inja's {% if %} treats an
 // empty string as truthy (only false/null/0/[] are falsy), so templates can guard with a plain
 // `{% if docComment %}` and reindent the (possibly multi-line) result to their own call site's
@@ -75,9 +79,9 @@ Node nodeSplitPathTemplate(const Node::Vec& args)
 Node nodeBuildDocComment(const Node::Vec& args)
 {
     if (args.size() < 1)
-        throw runtime_error("<9a93f7b2> buildDocComment requires 1-4 arguments (summary: string|null, "
+        throw runtime_error("<9a93f7b2> buildDocComment requires 1-5 arguments (summary: string|null, "
                              "description?: string|null, params?: [{name, description}], "
-                             "style?: \"/** */\"|\"//\"|\"///\"|\"#\")");
+                             "style?: \"/** */\"|\"//\"|\"///\"|\"#\", tags?: [{tag, text}])");
     auto getOptStr = [&](size_t i) -> optional<string> {
         if (i >= args.size())
             return nullopt;
@@ -98,7 +102,11 @@ Node nodeBuildDocComment(const Node::Vec& args)
     // but corrupts "//"/"///"/"#" output: a real multi-paragraph OpenAPI description commonly
     // contains "\n", and an un-prefixed continuation line for those styles isn't a comment at all
     // - it splices straight into the surrounding source.
-    auto appendLines = [](vector<string>& target, const string& text) {
+    // Trailing newlines are dropped first: a YAML literal block (`description: |`) always ends in
+    // "\n", which would otherwise become an empty trailing comment line.
+    auto appendLines = [](vector<string>& target, string text) {
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+            text.pop_back();
         size_t start = 0;
         while (true) {
             auto pos = text.find('\n', start);
@@ -112,7 +120,23 @@ Node nodeBuildDocComment(const Node::Vec& args)
         }
     };
 
-    vector<string> paramLines;
+    // One tag line ("@param a ...", "\\return ...", ":param a: ..." - `head` is written verbatim, so
+    // the generator picks its own language's tag syntax) followed by its continuation lines, each
+    // indented by two spaces: YARD only attaches an indented continuation to the tag, and
+    // KDoc/TSDoc/JSDoc/Doxygen don't care either way.
+    vector<string> tagLines;
+    auto appendTag = [&](const string& head, const string& text) {
+        vector<string> textLines;
+        if (!text.empty())
+            appendLines(textLines, text);
+        if (textLines.empty() || textLines[0].empty())
+            tagLines.push_back(head);
+        else
+            tagLines.push_back(head + " " + textLines[0]);
+        for (size_t i = 1; i < textLines.size(); i++)
+            tagLines.push_back(textLines[i].empty() ? "" : "  " + textLines[i]);
+    };
+
     if (args.size() >= 3) {
         auto params = args[2].getIf<Node::Vec>();
         if (params) {
@@ -128,26 +152,38 @@ Node nodeBuildDocComment(const Node::Vec& args)
                 if (!desc || desc->empty())
                     continue;
                 auto name = nameIt != m->end() && nameIt->second.getIf<string>() ? *nameIt->second.getIf<string>() : "";
-                // A multi-line param description gets "@param name" on its first line only;
-                // continuation lines are plain text, matching how every other doc-comment
-                // convention here renders a wrapped @param description.
-                vector<string> descLines;
-                appendLines(descLines, *desc);
-                paramLines.push_back(format("@param {} {}", name, descLines[0]));
-                for (size_t i = 1; i < descLines.size(); i++)
-                    paramLines.push_back(descLines[i]);
+                appendTag(format("@param {}", name), *desc);
             }
         }
+    }
+
+    if (args.size() >= 5) {
+        if (auto tags = args[4].getIf<Node::Vec>()) {
+            for (const auto& t : *tags) {
+                auto m = t.getIf<Node::Map>();
+                auto field = [&](const char* key) -> const string* {
+                    auto it = m->find(key);
+                    return it != m->end() ? it->second.getIf<string>() : nullptr;
+                };
+                auto tag = m ? field("tag") : nullptr;
+                if (!tag || tag->empty())
+                    throw runtime_error(
+                        "<c3232c30> buildDocComment: every tags entry must be an object with a non-empty string `tag`");
+                auto text = field("text");
+                appendTag(*tag, text ? *text : "");
+            }
+        } else if (!args[4].getIf<Node::Null>())
+            throw runtime_error("<7c8da428> buildDocComment: `tags` must be an array of {tag, text} or null");
     }
 
     vector<string> lines;
     for (auto s : { getOptStr(0), getOptStr(1) })
         if (s && !s->empty())
             appendLines(lines, *s);
-    if (!paramLines.empty()) {
+    if (!tagLines.empty()) {
         if (!lines.empty())
             lines.push_back("");
-        for (auto& l : paramLines)
+        for (auto& l : tagLines)
             lines.push_back(l);
     }
 

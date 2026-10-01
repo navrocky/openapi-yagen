@@ -20,7 +20,7 @@ generator or rework an existing one's templates - not just that the output compi
   class (one per tag) also needs its own doc comment - the same tag description already shown on
   the class it points to, not left bare just because the class itself is already documented. See
   `kotlin_ktor_client_generator`/`kotlin_ktor_server_generator`/
-  `typescript_fetch_client_generator`'s `lib/operations.js` (`buildDocLines`/`tagDescription`) and
+  `typescript_fetch_client_generator`'s `lib/operations.js` (`buildDocComment` calls/`tagDescription`) and
   their model templates for the reference implementation - when adding a new generator or
   reworking an existing one's templates, verify all of the above still holds, not just that the
   code compiles/runs.

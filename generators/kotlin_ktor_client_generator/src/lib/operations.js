@@ -362,13 +362,25 @@ function successResponseEntries(responses) {
 // A single success response keeps the plain `suspend fun op(...): T` signature (decoded regardless
 // of the actual status). Two or more become a sealed interface with one nested StatusNNN class per
 // status code, picked by the actual response status.
+// The operation doc comment's @return tag: the picked response's own description, or for a
+// multi-response operation the status code and body type of each variant. Omitted when there's
+// nothing returned or nothing to say about it.
+function returnDocTags(response) {
+  if (response.type === "Unit") return [];
+  if (response.variants) {
+    const variants = response.variants.map((v) => `${v.statusCode} (${v.type === "Unit" ? "no body" : v.type})`);
+    return [{ tag: "@return", text: `one of: ${variants.join(", ")}` }];
+  }
+  return response.description ? [{ tag: "@return", text: response.description }] : [];
+}
+
 function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
   const entries = successResponseEntries(responses || {});
   if (entries.length < 2) {
     const picked = entries[0] || firstSuccessResponse(responses || {});
     if (!picked) return { type: "Unit", statusCode: 200, variants: null };
     const statusCode = /^\d+$/.test(picked.statusCode) ? parseInt(picked.statusCode, 10) : 200;
-    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response), variants: null };
+    return { ...buildResponseBody(registry, hintBase + "Response", statusCode, picked.response), description: picked.response.description || null, variants: null };
   }
   // Checked against model names too: the apis package star-imports the models package, and a
   // same-named declaration in apis would shadow the model there.
@@ -434,7 +446,9 @@ export function collectOperationsByTag(registry) {
           docComment: buildDocComment(
             op.summary,
             op.description,
-            allParams.filter((p) => p.description).map((p) => ({ name: p.ktName, description: p.description }))
+            allParams.filter((p) => p.description).map((p) => ({ name: p.ktName, description: p.description })),
+            "/** */",
+            returnDocTags(response)
           ),
           pathParams,
           queryParams,

@@ -10,9 +10,9 @@
 // there's no per-parameter runtime CONVERSION code to generate, unlike TypeScript/Kotlin, which
 // both need to know a query parameter's shape up front to emit correctly-typed code (a real Ruby
 // type is still computed for every parameter that honestly has one, purely for its YARD @param -
-// see scalarLabel/buildDocLines below). Path and header parameters still need a single unambiguous
-// wire string, so those two positions keep the same scalar/enum-or-Error validation the sibling
-// generators apply (see buildPathParam/buildHeaderParam below).
+// see scalarLabel/buildOperationDocComment below). Path and header parameters still need a single
+// unambiguous wire string, so those two positions keep the same scalar/enum-or-Error validation the
+// sibling generators apply (see buildPathParam/buildHeaderParam below).
 
 import { className, paramName, operationName } from "./naming.js";
 import { rubyType } from "./types.js";
@@ -373,27 +373,24 @@ function tagDescription(tagName) {
   return (tag && tag.description) || null;
 }
 
-// Builds the YARD comment lines for one operation method - mirrors
-// ruby_rails_server_generator's own buildDocLines (its handler-interface method's doc comment is
-// the same shape), covering summary AND description, each documented/typed parameter (as @param
+// Builds the YARD doc comment for one operation method - mirrors
+// ruby_rails_server_generator's own buildOperationDocComment (its handler-interface method's doc
+// comment is the same shape), covering summary AND description, each documented/typed parameter (as @param
 // lines), and the return type (as @return). A query parameter's `label` can be null (an
 // object/deepObject shape - see buildQueryParam) - falls back to the old untyped rendering for
 // exactly that case, everything else always has a real label.
-function buildDocLines(op, docParams, response) {
-  const lines = [];
-  if (op.summary) lines.push(op.summary);
-  if (op.description) lines.push(op.description);
-  for (const p of docParams) {
+function buildOperationDocComment(op, docParams, response) {
+  const tags = docParams.map((p) => {
     const bracket = p.label ? `[${p.label}] ` : "";
-    lines.push(p.description ? `@param ${p.name} ${bracket}${p.description}` : `@param ${p.name} [${p.label}]`);
-  }
+    return { tag: "@param", text: p.description ? `${p.name} ${bracket}${p.description}` : `${p.name} [${p.label}]` };
+  });
   if (response.variants) {
     const statuses = response.variants.map((v) => `${v.statusCode} (${v.descriptor ? v.label : "no body"})`).join(", ");
-    lines.push(`@return [${response.label}] status and body of one of: ${statuses}`);
+    tags.push({ tag: "@return", text: `[${response.label}] status and body of one of: ${statuses}` });
   } else {
-    lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+    tags.push({ tag: "@return", text: response.descriptor ? `[${response.label}]` : "[void]" });
   }
-  return lines;
+  return buildDocComment(op.summary, op.description, [], "#", tags);
 }
 
 // Returns a Map<tag, { tagClass, propertyName, description, operations: [...] }> in
@@ -464,7 +461,7 @@ export function collectOperationsByTag(registry) {
         groups.get(tag).operations.push({
           name: opName,
           method: op.method.toLowerCase(),
-          docLines: buildDocLines({ summary: op.summary, description }, docParams, response),
+          docComment: buildOperationDocComment({ summary: op.summary, description }, docParams, response),
           kwargs,
           pathParams,
           pathExpr,

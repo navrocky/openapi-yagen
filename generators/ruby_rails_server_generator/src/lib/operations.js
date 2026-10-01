@@ -489,23 +489,23 @@ function tagDescription(tagName) {
   return (tag && tag.description) || null;
 }
 
-// Builds the YARD comment lines for one operation's handler-interface method - docs/develop/generator-conventions.md's
+// Builds the YARD doc comment for one operation's handler-interface method - docs/develop/generator-conventions.md's
 // "thread OpenAPI description into generated doc comments" convention, covering summary AND
 // description (both, not just summary), each documented parameter (as @param lines), and the
 // return type (as @return - RubyMine and other YARD-aware tools use this to type-check a
 // handler's implementation against what the generated code will actually call it with).
-function buildDocLines(op, docParams, response) {
-  const lines = [];
-  if (op.summary) lines.push(op.summary);
-  if (op.description) lines.push(op.description);
-  for (const p of docParams) lines.push(p.description ? `@param ${p.name} [${p.label}] ${p.description}` : `@param ${p.name} [${p.label}]`);
+function buildOperationDocComment(op, docParams, response) {
+  const tags = docParams.map((p) => ({
+    tag: "@param",
+    text: p.description ? `${p.name} [${p.label}] ${p.description}` : `${p.name} [${p.label}]`,
+  }));
   if (response.variants) {
     const statuses = response.variants.map((v) => `${v.statusCode} (${v.descriptor ? v.label : "no body"})`).join(", ");
-    lines.push(`@return [${response.label}] status and body of one of: ${statuses}`);
+    tags.push({ tag: "@return", text: `[${response.label}] status and body of one of: ${statuses}` });
   } else {
-    lines.push(response.descriptor ? `@return [${response.label}]` : "@return [void]");
+    tags.push({ tag: "@return", text: response.descriptor ? `[${response.label}]` : "[void]" });
   }
-  return lines;
+  return buildDocComment(op.summary, op.description, [], "#", tags);
 }
 
 // Returns a Map<tag, { tagModule, fileBase, description, operations: [...] }> in
@@ -596,7 +596,7 @@ export function collectOperationsByTag(registry) {
           name: opName,
           httpMethod: op.method.toLowerCase(),
           routePattern,
-          docLines: buildDocLines({ summary: op.summary, description }, docParams, response),
+          docComment: buildOperationDocComment({ summary: op.summary, description }, docParams, response),
           handlerKwargs,
           statements,
           bodyStatements,

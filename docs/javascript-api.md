@@ -126,9 +126,10 @@ splitPathTemplate("/pets/{petId}/ratings");
 
 #### `buildDocComment`
 
-Builds a doc comment block from a summary, a longer description, and a list of `{ name,
-description }` `@param` entries, in one of four comment styles selected by `style` - the literal
-marker string itself, so a call site reads as what it produces. Returns `null` (not `""`) when
+Builds a doc comment block from a summary, a longer description, a list of `{ name,
+description }` `@param` entries and optional extra doc tags, in one of four comment styles
+selected by `style` - the literal marker string itself, so a call site reads as what it produces.
+Returns `null` (not `""`) when
 there's nothing to document - Inja's `{% if %}` treats an empty string as truthy (only
 `false`/`null`/`0`/`[]` are falsy), so templates can guard with a plain `{% if docComment %}` and
 reindent the (possibly multi-line) result to their own call site's depth via `indent()` (see
@@ -139,7 +140,8 @@ buildDocComment(
     summary: string | null,
     description?: string | null,
     params?: Array<{ name: string, description?: string | null }>,
-    style?: "/** */" | "//" | "///" | "#" // default: "/** */"
+    style?: "/** */" | "//" | "///" | "#", // default: "/** */"
+    tags?: Array<{ tag: string, text?: string | null }> | null
 ): string | null
 ```
 
@@ -165,6 +167,18 @@ the former ends the comment early and the latter opens a nested comment in langu
 comments nest (Kotlin, Swift, Rust, Scala). These are markdown escapes, so KDoc/TSDoc/dartdoc still
 render the original text. The line-comment styles need no escaping and leave text as-is.
 
+`tags` are appended after the `params` entries, each as `<tag> <text>` (just `<tag>` when `text` is
+empty). `tag` is written verbatim, sigil included, since tag syntax differs per language well
+beyond the leading character: `"@return"` (KDoc/JSDoc/YARD), `"@returns"` (TSDoc), `"\\return"`
+(Doxygen), `":rtype:"` (Sphinx), and so on. Use it for whatever the built-in `params` can't
+express - typed parameters (`{ tag: "@param", text: "id [Integer] Pet id" }` for YARD), return
+values, `@throws`, `@deprecated`. Entries without a non-empty string `tag` throw.
+
+Every text may span several lines: each line gets its own comment marker, and continuation lines
+of a `@param`/tag entry are indented by two spaces so they stay attached to the tag (YARD requires
+this; KDoc/TSDoc/Doxygen accept it). Trailing newlines - e.g. from a YAML `description: |` block -
+are dropped rather than becoming an empty comment line.
+
 An unrecognized `style` throws rather than silently falling back, so a typo in a generator's own
 call site fails loudly at generation time instead of emitting silently-wrong comments.
 
@@ -176,6 +190,12 @@ buildDocComment(null, null, []); // -> null
 buildDocComment("Lists pets.", null, [], "//");   // -> "// Lists pets."
 buildDocComment("Lists pets.", null, [], "///");  // -> "/// Lists pets."
 buildDocComment("Lists pets.", null, [], "#");    // -> "# Lists pets."
+
+buildDocComment("Lists pets.", "Paged.\nNewest first.\n", [], "#", [
+  { tag: "@param", text: "limit [Integer] Max results.\nDefaults to 20." },
+  { tag: "@return", text: "[Array<Pet>]" },
+]);
+// -> "# Lists pets.\n# Paged.\n# Newest first.\n#\n# @param limit [Integer] Max results.\n#   Defaults to 20.\n# @return [Array<Pet>]"
 ```
 
 #### `disambiguateName`

@@ -6,8 +6,8 @@ module {{ moduleName }}
   # {{ moduleName }}::Routes.draw(mapper, handlers: { {{ toSnakeCase(group.tagBase) }}: YourHandler.new }).
   module {{ group.tagBase }}HandlerInterface
 {% for op in group.operations %}
-{% for line in op.docLines %}    # {{ line }}
-{% endfor %}    def {{ op.name }}({% for k in op.handlerKwargs %}{{ k.rubyName }}:{% if not k.required %} nil{% endif %}{% if not loop.is_last %}, {% endif %}{% endfor %})
+{% if op.docComment %}    {{ op.docComment | indent(4) }}
+{% endif %}    def {{ op.name }}({% for k in op.handlerKwargs %}{{ k.rubyName }}:{% if not k.required %} nil{% endif %}{% if not loop.is_last %}, {% endif %}{% endfor %})
       raise NotImplementedError, "#{self.class} must implement #{{ op.name }}"
     end
 {% endfor %}

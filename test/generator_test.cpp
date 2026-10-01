@@ -597,8 +597,96 @@ renderTemplate("test_template", {
     auto& out = fileWriter->files["outfile"];
     REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docBlock=/**\n * Line one.\n * Line two.\n */"));
     REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring(
-                           "docSlash=// Line one.\n// Line two.\n// Desc one.\n// Desc two.\n//\n// @param a first.\n// second."));
+                           "docSlash=// Line one.\n// Line two.\n// Desc one.\n// Desc two.\n//\n// @param a first.\n//   second."));
     REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docCrlf=// Line one.\n// Line two."));
+}
+
+TEST_CASE("buildDocComment appends verbatim tags with indented continuation lines", "[generator]")
+{
+    auto fileWriter = make_shared<MockedFileWriter>();
+    auto templateRenderer = make_shared<MockedTemplateRenderer>();
+
+    MockedFileReaderBackend::Files files = {
+        { "main.js", R"JS(
+renderTemplate("test_template", {
+  // YARD-style typed tags; a YAML literal block's trailing "\n" must not leave an empty line.
+  docHash: buildDocComment("Summary", "Desc one.\n\nDesc two.\n", [], "#", [
+    { tag: "@param", text: "id [Integer] first.\nsecond.\n" },
+    { tag: "@return", text: "[Pet]" },
+    { tag: "@deprecated" },
+  ]),
+  // Tags follow the built-in params; any sigil is written as given.
+  docBlock: buildDocComment("Summary", null, [{ name: "a", description: "the a" }], "/** */", [
+    { tag: "\\return", text: "ends */ here" },
+  ]),
+  // Tags alone are enough to produce a comment.
+  docTagsOnly: buildDocComment(null, null, [], "//", [{ tag: ":rtype:", text: "str" }]),
+  docNullTags: buildDocComment("Summary", null, [], "//", null),
+}, "outfile");
+)JS" },
+        { "generator.yml", readResource("generator.yml") },
+    };
+
+    auto fileReader = make_shared<FileReader>(FileReader::Opts {
+        .backends = { make_shared<MockedFileReaderBackend>(files) },
+    });
+    auto jsExecutor = make_shared<JS::Executor>(JS::Executor::Opts { .fileReader = fileReader });
+    Generator::OpenApiGenerator gen(Generator::OpenApiGenerator::Opts {
+        .fileReader = fileReader,
+        .fileWriter = fileWriter,
+        .jsExecutor = jsExecutor,
+        .templateRenderer = templateRenderer,
+        .defaultMainSciptPath = "main.js",
+        .metadataPath = "generator.yml",
+        .vars = { },
+        .tags = { },
+        .headerText = std::nullopt,
+        .noHeader = true,
+    });
+
+    gen.generate(getResourcePath("petstore.yaml"));
+
+    auto& out = fileWriter->files["outfile"];
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring(
+                           "docHash=# Summary\n# Desc one.\n#\n# Desc two.\n#\n# @param id [Integer] first.\n#   second.\n"
+                           "# @return [Pet]\n# @deprecated,"));
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring(
+                           "docBlock=/**\n * Summary\n *\n * @param a the a\n * \\return ends *\\/ here\n */"));
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docTagsOnly=// :rtype: str}"));
+    REQUIRE_THAT(out, Catch::Matchers::ContainsSubstring("docNullTags=// Summary,"));
+}
+
+TEST_CASE("buildDocComment rejects a tags entry without a tag", "[generator]")
+{
+    auto fileWriter = make_shared<MockedFileWriter>();
+    auto templateRenderer = make_shared<MockedTemplateRenderer>();
+
+    MockedFileReaderBackend::Files files = {
+        { "main.js", R"JS(
+buildDocComment("x", null, [], "#", [{ text: "no tag" }]);
+)JS" },
+        { "generator.yml", readResource("generator.yml") },
+    };
+
+    auto fileReader = make_shared<FileReader>(FileReader::Opts {
+        .backends = { make_shared<MockedFileReaderBackend>(files) },
+    });
+    auto jsExecutor = make_shared<JS::Executor>(JS::Executor::Opts { .fileReader = fileReader });
+    Generator::OpenApiGenerator gen(Generator::OpenApiGenerator::Opts {
+        .fileReader = fileReader,
+        .fileWriter = fileWriter,
+        .jsExecutor = jsExecutor,
+        .templateRenderer = templateRenderer,
+        .defaultMainSciptPath = "main.js",
+        .metadataPath = "generator.yml",
+        .vars = { },
+        .tags = { },
+        .headerText = std::nullopt,
+        .noHeader = true,
+    });
+
+    REQUIRE_THROWS_WITH(gen.generate(getResourcePath("petstore.yaml")),
+                        Catch::Matchers::ContainsSubstring("non-empty string `tag`"));
 }
 
 TEST_CASE("buildDocComment escapes comment delimiters in the \"/** */\" style", "[generator]")

@@ -427,12 +427,24 @@ function successResponseEntries(responses) {
 // A single success response keeps the plain `Promise<T>` return type (parsed regardless of the
 // actual 2xx status). Two or more become a discriminated union on `status`, one member per status
 // code, parsed according to the actual response status.
+// The operation doc comment's @returns tag: the picked response's own description, or for a
+// multi-response operation the status code and body type of each variant. Omitted when there's
+// nothing returned or nothing to say about it.
+function returnDocTags(response) {
+  if (response.tsType === "void") return [];
+  if (response.variants) {
+    const variants = response.variants.map((v) => `${v.statusCode} (${v.tsType === "void" ? "no body" : v.tsType})`);
+    return [{ tag: "@returns", text: `one of: ${variants.join(", ")}` }];
+  }
+  return response.description ? [{ tag: "@returns", text: response.description }] : [];
+}
+
 function buildResponse(registry, hintBase, opName, responses, usedTypeNames) {
   const entries = successResponseEntries(responses || {});
   if (entries.length < 2) {
     const picked = entries[0] || firstSuccessResponse(responses || {});
     if (!picked) return { tsType: "void", statusCode: null, descriptor: null, encoding: "json", variants: null };
-    return { ...buildResponseBody(registry, hintBase + "Response", picked.statusCode, picked.response), variants: null };
+    return { ...buildResponseBody(registry, hintBase + "Response", picked.statusCode, picked.response), description: picked.response.description || null, variants: null };
   }
   // Exported from the same index.ts as every model, so it must not reuse a model's name either.
   let aliasName = typeName(opName) + "Response";
@@ -567,7 +579,9 @@ export function collectOperationsByTag(registry, validateResponses) {
             op.description,
             [...pathParams, ...queryParams, ...headerParams]
               .filter((p) => p.description)
-              .map((p) => ({ name: p.tsName, description: p.description }))
+              .map((p) => ({ name: p.tsName, description: p.description })),
+            "/** */",
+            returnDocTags(response)
           ),
           pathParams,
           pathExpr,

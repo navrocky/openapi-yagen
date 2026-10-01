@@ -2,6 +2,7 @@ package com.example.kitchensink.client
 
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // Asserts that OpenAPI `description` (schema/model, property, parameter, operation) and the
@@ -67,14 +68,27 @@ class GeneratedDocCommentsTest {
     }
 
     @Test
-    fun `an operation with no summary or description gets no doc comment, not an empty one`() {
+    fun `an operation with no summary or description gets just its @return tag, no empty lines`() {
         val lines = File(generatedDir, "apis/PetsApi.kt").readLines()
         // createPet has no summary/description/documented params in the fixture - the KDoc
-        // machinery must degrade to nothing, not emit a stray "/**" with no content. Check the
-        // immediately preceding non-blank line isn't part of a doc comment block.
+        // machinery must not emit empty summary lines around its lone @return tag.
         val fnIndex = lines.indexOfFirst { it.contains("suspend fun createPet") }
         assertTrue(fnIndex > 0, "createPet function not found")
         val precedingLine = lines.subList(0, fnIndex).last { it.isNotBlank() }
-        assertTrue(!precedingLine.trimStart().let { it.startsWith("*") || it.startsWith("/**") }, "unexpected doc comment before createPet: \"$precedingLine\"")
+        assertEquals("/** @return Created */", precedingLine.trim(), "unexpected doc comment before createPet")
+    }
+
+    @Test
+    fun `multi-line descriptions stay inside the KDoc and @return carries the response description`() {
+        val petsApi = File(generatedDir, "apis/PetsApi.kt").readText()
+        assertTrue(
+            petsApi.contains("* A multi-line description - every line must stay inside the generated doc comment."),
+            "missing second description paragraph:\n$petsApi"
+        )
+        assertTrue(
+            petsApi.contains("* @param limit Maximum number of pets to return.\n     *   Continues on a second line."),
+            "missing indented @param continuation:\n$petsApi"
+        )
+        assertTrue(petsApi.contains("* @return A page of pets\n"), "missing @return:\n$petsApi")
     }
 }

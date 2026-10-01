@@ -74,14 +74,24 @@ test("each ApiClient property gets the same tag description as the class it poin
   );
 });
 
-test("an operation with no summary or description gets no doc comment, not an empty one", () => {
+test("an operation with no summary or description gets just its @returns tag, no empty lines", () => {
   const petsClient = readGenerated("apis/PetsClient.ts");
   const lines = petsClient.split("\n");
   const fnIndex = lines.findIndex((l) => l.includes("createPet("));
   assert.ok(fnIndex > 0, "createPet method not found");
   const precedingLine = [...lines.slice(0, fnIndex)].reverse().find((l) => l.trim() !== "")!;
-  assert.ok(
-    !precedingLine.trimStart().startsWith("*") && !precedingLine.trimStart().startsWith("/**"),
-    `unexpected doc comment before createPet: "${precedingLine}"`
-  );
+  assert.equal(precedingLine.trim(), "/** @returns Created */", `unexpected doc comment before createPet`);
+});
+
+test("@returns carries the response description, or every variant of a multi-response operation", () => {
+  const petsClient = readGenerated("apis/PetsClient.ts");
+  assert.match(petsClient, /\* @returns A page of pets\n/, `missing listPets @returns:\n${petsClient}`);
+  const jobsClient = readGenerated("apis/JobsClient.ts");
+  assert.match(jobsClient, /\* @returns one of: 200 \(Uint8Array\), 202 \(Job\)/, `missing variants @returns:\n${jobsClient}`);
+});
+
+test("multi-line descriptions keep every line inside the doc comment", () => {
+  const petsClient = readGenerated("apis/PetsClient.ts");
+  assert.match(petsClient, /\* A multi-line description - every line must stay inside the generated doc comment\./);
+  assert.match(petsClient, /\* @param limit Maximum number of pets to return\.\n\s+\* {3}Continues on a second line\./);
 });
